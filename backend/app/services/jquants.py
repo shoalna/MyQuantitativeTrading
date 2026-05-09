@@ -249,33 +249,34 @@ async def _store_daily_prices(pool, quotes: list[dict]) -> None:
     if not records:
         return
     async with pool.acquire() as conn:
-        await conn.executemany(
-            """
-            INSERT INTO jp_daily_prices (code, date, open, high, low, close, volume)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (code, date) DO UPDATE SET
-                open   = EXCLUDED.open,
-                high   = EXCLUDED.high,
-                low    = EXCLUDED.low,
-                close  = EXCLUDED.close,
-                volume = EXCLUDED.volume
-            """,
-            records,
-        )
+        async with conn.transaction():
+            await conn.executemany(
+                """
+                INSERT INTO jp_daily_prices (code, date, open, high, low, close, volume)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (code, date) DO UPDATE SET
+                    open   = EXCLUDED.open,
+                    high   = EXCLUDED.high,
+                    low    = EXCLUDED.low,
+                    close  = EXCLUDED.close,
+                    volume = EXCLUDED.volume
+                """,
+                records,
+            )
 
 
-async def _find_latest_trading_day(client: JQuantsClient, start: date, max_lookback: int = 7) -> date:
+async def _find_latest_trading_day(client: JQuantsClient, start: date, max_lookback: int = 7) -> tuple[date, list[dict]]:
     """
     Walk backwards from `start` until we find a date the API has price data for.
-    Needed because today's data isn't published until market close, and weekends/
-    holidays return empty results.
+    Returns (trading_date, raw_records) so the caller can reuse the fetched data
+    without making a second bulk API call for the same date.
     """
     for offset in range(max_lookback):
         candidate = start - timedelta(days=offset)
         records = await client.get_daily_quotes(date_str=_to_yyyymmdd(candidate))
         if records:
             logger.info(f"Latest trading day with data: {candidate}")
-            return candidate
+            return candidate, records
     raise RuntimeError(f"No trading data found in the last {max_lookback} days")
 
 
@@ -301,21 +302,23 @@ async def _fetch_daily_for_month(
         )
 
     if cached_date:
-        logger.info(f"Cache hit for {month_end.strftime('%Y-%m')}: using DB data from {cached_date}")
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT code, close FROM jp_daily_prices WHERE date = $1 AND close IS NOT NULL",
                 cached_date,
             )
-        return cached_date, {r["code"]: float(r["close"]) for r in rows}
+        # Reject suspiciously small cache hits — they indicate a partial previous write
+        if len(rows) >= 100:
+            logger.info(f"Cache hit for {month_end.strftime('%Y-%m')}: {len(rows)} rows from {cached_date}")
+            return cached_date, {r["code"]: float(r["close"]) for r in rows}
+        logger.warning(f"Cache for {month_end.strftime('%Y-%m')} has only {len(rows)} rows — treating as miss")
 
-    # Cache miss — fetch from API
+    # Cache miss — fetch from API; reuse the records already pulled by the probe
     logger.info(f"Cache miss for {month_end.strftime('%Y-%m')}: fetching from API")
     if on_step:
         await on_step(f"Fetching {month_end.strftime('%Y-%m')} from API…", 0)
 
-    trading_day = await _find_latest_trading_day(client, upper_bound)
-    raw = await client.get_daily_quotes(date_str=_to_yyyymmdd(trading_day))
+    trading_day, raw = await _find_latest_trading_day(client, upper_bound)
     quotes = [_normalize_quote(r) for r in raw]
     await _store_daily_prices(pool, quotes)
 
