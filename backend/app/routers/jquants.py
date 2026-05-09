@@ -100,9 +100,13 @@ async def _do_refresh_prices() -> None:
 
 # ── Helper: dynamic WHERE builder ─────────────────────────────────────────────
 
+_EXCLUDED_MARKETS = {"その他"}
+
+
 def _build_where(search: str, market: str, sector: str):
     """Return (where_clause, params_list, next_param_index)."""
-    conditions: list[str] = []
+    # Always exclude markets that carry no meaningful trading data
+    conditions: list[str] = ["l.market NOT IN ('その他')"]
     params: list = []
     p = 0
 
@@ -122,7 +126,7 @@ def _build_where(search: str, market: str, sector: str):
         p += 1
         conditions.append(f"l.sector = ${p}")
 
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    where = f"WHERE {' AND '.join(conditions)}"
     return where, params, p
 
 
@@ -180,7 +184,7 @@ async def get_filters():
     pool = await get_pool()
     async with pool.acquire() as conn:
         markets = await conn.fetch(
-            "SELECT DISTINCT market FROM jp_listings WHERE market != '' ORDER BY market"
+            "SELECT DISTINCT market FROM jp_listings WHERE market != '' AND market NOT IN ('その他') ORDER BY market"
         )
         sectors = await conn.fetch(
             "SELECT DISTINCT sector FROM jp_listings WHERE sector != '' ORDER BY sector"
