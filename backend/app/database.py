@@ -138,7 +138,8 @@ MIGRATION_SQL = """
 ALTER TABLE jobs     ADD COLUMN IF NOT EXISTS language          TEXT NOT NULL DEFAULT 'en';
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS title_translated  TEXT;
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS snippet_translated TEXT;
-ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS abs_change_6m NUMERIC(15,2);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS abs_change_6m  NUMERIC(15,2);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS change_months  SMALLINT;
 """
 
 

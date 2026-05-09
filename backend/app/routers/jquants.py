@@ -1,11 +1,15 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.config import settings
 from app.database import get_pool
-from app.services.jquants import JQuantsClient, get_chart_data, refresh_listings, refresh_prices
+from app.services.jquants import (
+    JQuantsClient, get_chart_data, get_stock_detail,
+    refresh_listings, refresh_prices,
+    _normalize_quote, _store_daily_prices, _to_yyyymmdd,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["jquants"])
@@ -94,16 +98,44 @@ async def _do_refresh_prices() -> None:
         _prices_status["running"] = False
 
 
+# ── Helper: dynamic WHERE builder ─────────────────────────────────────────────
+
+def _build_where(search: str, market: str, sector: str):
+    """Return (where_clause, params_list, next_param_index)."""
+    conditions: list[str] = []
+    params: list = []
+    p = 0
+
+    if search:
+        like = f"%{search}%"
+        params.append(like)
+        p += 1
+        conditions.append(f"(l.code ILIKE ${p} OR l.name ILIKE ${p} OR l.name_en ILIKE ${p})")
+
+    if market:
+        params.append(market)
+        p += 1
+        conditions.append(f"l.market = ${p}")
+
+    if sector:
+        params.append(sector)
+        p += 1
+        conditions.append(f"l.sector = ${p}")
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return where, params, p
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @router.get("/status")
 async def get_status():
     pool = await get_pool()
     async with pool.acquire() as conn:
-        listings_db_count = await conn.fetchval("SELECT COUNT(*) FROM jp_listings")
+        listings_db_count   = await conn.fetchval("SELECT COUNT(*) FROM jp_listings")
         listings_db_updated = await conn.fetchval("SELECT MAX(updated_at) FROM jp_listings")
-        prices_db_count = await conn.fetchval("SELECT COUNT(*) FROM jp_stock_summary")
-        prices_db_updated = await conn.fetchval("SELECT MAX(updated_at) FROM jp_stock_summary")
+        prices_db_count     = await conn.fetchval("SELECT COUNT(*) FROM jp_stock_summary")
+        prices_db_updated   = await conn.fetchval("SELECT MAX(updated_at) FROM jp_stock_summary")
 
     return {
         "api_configured": bool(settings.jquants_api_key),
@@ -142,56 +174,62 @@ async def trigger_refresh_prices(background_tasks: BackgroundTasks):
     return {"message": "Price data update started"}
 
 
+@router.get("/filters")
+async def get_filters():
+    """Return distinct markets and sectors for filter dropdowns."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        markets = await conn.fetch(
+            "SELECT DISTINCT market FROM jp_listings WHERE market != '' ORDER BY market"
+        )
+        sectors = await conn.fetch(
+            "SELECT DISTINCT sector FROM jp_listings WHERE sector != '' ORDER BY sector"
+        )
+    return {
+        "markets": [r["market"] for r in markets],
+        "sectors": [r["sector"] for r in sectors],
+    }
+
+
 @router.get("/stocks")
 async def list_stocks(
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
-    sort_by: str = Query("code"),
+    page:     int = Query(1, ge=1),
+    limit:    int = Query(50, ge=1, le=200),
+    sort_by:  str = Query("code"),
     sort_dir: str = Query("asc"),
-    search: str = Query(""),
+    search:   str = Query(""),
+    market:   str = Query(""),
+    sector:   str = Query(""),
 ):
     pool = await get_pool()
     sort_col = _SORT_MAP.get(sort_by, "l.code")
-    order = "DESC" if sort_dir.lower() == "desc" else "ASC"
-    offset = (page - 1) * limit
+    order    = "DESC" if sort_dir.lower() == "desc" else "ASC"
+    offset   = (page - 1) * limit
+
+    where_clause, base_params, base_p = _build_where(search, market, sector)
 
     async with pool.acquire() as conn:
-        if search:
-            like = f"%{search}%"
-            total = await conn.fetchval(
-                "SELECT COUNT(*) FROM jp_listings WHERE code ILIKE $1 OR name ILIKE $1 OR name_en ILIKE $1",
-                like,
-            )
-            rows = await conn.fetch(
-                f"""
-                SELECT l.code, l.name, l.name_en, l.sector, l.market,
-                       s.current_price, s.change_6m, s.abs_change_6m, s.updated_at AS price_updated_at
-                FROM jp_listings l
-                LEFT JOIN jp_stock_summary s ON l.code = s.code
-                WHERE l.code ILIKE $1 OR l.name ILIKE $1 OR l.name_en ILIKE $1
-                ORDER BY {sort_col} {order} NULLS LAST
-                LIMIT $2 OFFSET $3
-                """,
-                like, limit, offset,
-            )
-        else:
-            total = await conn.fetchval("SELECT COUNT(*) FROM jp_listings")
-            rows = await conn.fetch(
-                f"""
-                SELECT l.code, l.name, l.name_en, l.sector, l.market,
-                       s.current_price, s.change_6m, s.abs_change_6m, s.updated_at AS price_updated_at
-                FROM jp_listings l
-                LEFT JOIN jp_stock_summary s ON l.code = s.code
-                ORDER BY {sort_col} {order} NULLS LAST
-                LIMIT $1 OFFSET $2
-                """,
-                limit, offset,
-            )
+        total = await conn.fetchval(
+            f"SELECT COUNT(*) FROM jp_listings l {where_clause}",
+            *base_params,
+        )
+        rows = await conn.fetch(
+            f"""
+            SELECT l.code, l.name, l.name_en, l.sector, l.market,
+                   s.current_price, s.change_6m, s.abs_change_6m,
+                   s.change_months, s.updated_at AS price_updated_at
+            FROM jp_listings l
+            LEFT JOIN jp_stock_summary s ON l.code = s.code
+            {where_clause}
+            ORDER BY {sort_col} {order} NULLS LAST
+            LIMIT ${base_p + 1} OFFSET ${base_p + 2}
+            """,
+            *base_params, limit, offset,
+        )
 
     def _row(r):
         d = dict(r)
         if d.get("price_updated_at"):
-            # Strip timezone offset from asyncpg datetime then add explicit Z
             d["price_updated_at"] = d["price_updated_at"].replace(tzinfo=None).isoformat() + "Z"
         return d
 
@@ -218,8 +256,8 @@ async def probe_api():
 @router.get("/listings")
 async def list_companies(
     search: str = Query(""),
-    page: int = Query(1, ge=1),
-    limit: int = Query(100, ge=1, le=1000),
+    page:   int = Query(1, ge=1),
+    limit:  int = Query(100, ge=1, le=1000),
 ):
     """Cached company list from DB — no API call. Run /refresh/listings first."""
     pool = await get_pool()
@@ -233,12 +271,9 @@ async def list_companies(
                 like,
             )
             rows = await conn.fetch(
-                """
-                SELECT code, name, name_en, sector, market
-                FROM jp_listings
-                WHERE code ILIKE $1 OR name ILIKE $1 OR name_en ILIKE $1
-                ORDER BY code LIMIT $2 OFFSET $3
-                """,
+                """SELECT code, name, name_en, sector, market FROM jp_listings
+                   WHERE code ILIKE $1 OR name ILIKE $1 OR name_en ILIKE $1
+                   ORDER BY code LIMIT $2 OFFSET $3""",
                 like, limit, offset,
             )
         else:
@@ -262,3 +297,32 @@ async def get_stock_chart(code: str):
         return {"code": code.upper(), "data": data}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"JQuants API error: {exc}")
+
+
+@router.get("/stocks/{code}/detail")
+async def get_stock_detail_endpoint(code: str):
+    """Return full company detail: prices, Wikipedia summary, and stock info."""
+    pool = await get_pool()
+    client = JQuantsClient(settings.jquants_api_key) if settings.jquants_api_key else None
+    try:
+        return await get_stock_detail(pool, client, code.upper())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/stocks/{code}/refresh")
+async def refresh_stock(code: str):
+    """Re-fetch 90-day prices from JQuants for one stock, then return updated detail."""
+    if not settings.jquants_api_key:
+        raise HTTPException(status_code=400, detail="JQUANTS_API_KEY is not set in .env")
+    pool   = await get_pool()
+    client = JQuantsClient(settings.jquants_api_key)
+    today  = date.today()
+    from_d = today - timedelta(days=90)
+    try:
+        raw    = await client.get_daily_quotes(code=code.upper(), from_date=_to_yyyymmdd(from_d), to_date=_to_yyyymmdd(today))
+        quotes = sorted((_normalize_quote(r) for r in raw), key=lambda x: x["date"])
+        await _store_daily_prices(pool, quotes)
+        return await get_stock_detail(pool, client, code.upper())
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))

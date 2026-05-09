@@ -1,6 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getJpStocks, getJpStockChart, refreshJpListings, refreshJpPrices, getJpStatus } from '../api/client'
+import { getJpStocks, getJpStockChart, refreshJpListings, refreshJpPrices, getJpStatus, getJpFilters } from '../api/client'
 import { useLang } from '../context/LangContext'
+
+// ── Mobile detection ──────────────────────────────────────────────────────────
+
+function useIsMobile() {
+  const [mobile, setMobile] = useState(window.innerWidth < 768)
+  useEffect(() => {
+    const fn = () => setMobile(window.innerWidth < 768)
+    window.addEventListener('resize', fn)
+    return () => window.removeEventListener('resize', fn)
+  }, [])
+  return mobile
+}
 
 // ── Sparkline SVG ─────────────────────────────────────────────────────────────
 
@@ -59,7 +71,7 @@ function OpCard({ label, status, onStart, disabled, t }) {
   return (
     <div style={{
       background: 'var(--bg-card)', border: '1px solid var(--border)',
-      borderRadius: 'var(--r-sm)', padding: '12px 16px', minWidth: 280, flex: 1,
+      borderRadius: 'var(--r-sm)', padding: '12px 16px', minWidth: 240, flex: 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -84,27 +96,14 @@ function OpCard({ label, status, onStart, disabled, t }) {
           {isRunning ? `⟳ ${t('jp_syncing')}` : '↻ Update'}
         </button>
       </div>
-
-      {/* Progress message */}
       {(isRunning || hasError) && (
-        <div style={{
-          fontSize: 12,
-          color: hasError ? 'var(--red)' : 'var(--text-2)',
-          marginBottom: 4,
-          wordBreak: 'break-word',
-        }}>
+        <div style={{ fontSize: 12, color: hasError ? 'var(--red)' : 'var(--text-2)', marginBottom: 4, wordBreak: 'break-word' }}>
           {status.message}
         </div>
       )}
-
-      {/* DB summary row */}
       <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-        {status.db_count != null && (
-          <span>{Number(status.db_count).toLocaleString()} in DB</span>
-        )}
-        {status.db_last_update && (
-          <span>Last: {new Date(status.db_last_update).toLocaleString()}</span>
-        )}
+        {status.db_count != null && <span>{Number(status.db_count).toLocaleString()} in DB</span>}
+        {status.db_last_update && <span>Last: {new Date(status.db_last_update).toLocaleString()}</span>}
       </div>
     </div>
   )
@@ -144,20 +143,44 @@ function UpdatedAt({ iso, noDataLabel }) {
     )
   }
   const d = new Date(iso)
-  const date = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const timeStr = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
   return (
     <div style={{ fontSize: 11, lineHeight: 1.4 }}>
-      <div style={{ color: 'var(--text-1)' }}>{date}</div>
-      <div style={{ color: 'var(--text-3)' }}>{time}</div>
+      <div style={{ color: 'var(--text-1)' }}>{dateStr}</div>
+      <div style={{ color: 'var(--text-3)' }}>{timeStr}</div>
     </div>
+  )
+}
+
+// ── Filter select ─────────────────────────────────────────────────────────────
+
+function FilterSelect({ label, value, onChange, options, allLabel }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+      <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{label}</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          fontSize: 12, padding: '4px 8px',
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--r-sm)', color: 'var(--text-1)', cursor: 'pointer',
+          maxWidth: 180,
+        }}
+      >
+        <option value="">{allLabel}</option>
+        {options.map(o => <option key={o} value={o}>{o}</option>)}
+      </select>
+    </label>
   )
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function JapanStocks() {
+export default function JapanStocks({ onSelectStock }) {
   const { t } = useLang()
+  const isMobile = useIsMobile()
 
   const [stocks, setStocks]       = useState([])
   const [total, setTotal]         = useState(0)
@@ -167,6 +190,9 @@ export default function JapanStocks() {
   const [sortBy, setSortBy]       = useState({ by: 'code', dir: 'asc' })
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch]       = useState('')
+  const [filterMarket, setFilterMarket] = useState('')
+  const [filterSector, setFilterSector] = useState('')
+  const [filterOptions, setFilterOptions] = useState({ markets: [], sectors: [] })
   const [loading, setLoading]     = useState(false)
 
   const [status, setStatus]       = useState(null)
@@ -176,7 +202,13 @@ export default function JapanStocks() {
   const [chartData, setChartData] = useState({})
   const requestedCharts           = useRef(new Set())
 
-  // ── Status polling ──────────────────────────────────────────────────────────
+  // ── Load filter options once ─────────────────────────────────────────────────
+
+  useEffect(() => {
+    getJpFilters().then(({ data }) => setFilterOptions(data)).catch(() => {})
+  }, [])
+
+  // ── Status polling ───────────────────────────────────────────────────────────
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -204,14 +236,11 @@ export default function JapanStocks() {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [fetchStatus])
 
-  // Start polling whenever an operation is running
   useEffect(() => {
-    if (status?.listings?.running || status?.prices?.running) {
-      startPolling()
-    }
+    if (status?.listings?.running || status?.prices?.running) startPolling()
   }, [status, startPolling])
 
-  // ── Stock list fetching ─────────────────────────────────────────────────────
+  // ── Stock list fetching ──────────────────────────────────────────────────────
 
   const fetchStocks = useCallback(async () => {
     setLoading(true)
@@ -219,7 +248,7 @@ export default function JapanStocks() {
       const { data } = await getJpStocks({
         page, limit: LIMIT,
         sort_by: sortBy.by, sort_dir: sortBy.dir,
-        search,
+        search, market: filterMarket, sector: filterSector,
       })
       setStocks(data.data)
       setTotal(data.total)
@@ -228,13 +257,14 @@ export default function JapanStocks() {
     } finally {
       setLoading(false)
     }
-  }, [page, sortBy, search])
+  }, [page, sortBy, search, filterMarket, filterSector])
 
   useEffect(() => { fetchStocks() }, [fetchStocks])
 
-  // ── Chart lazy loading (batches of 2 to stay within 60/min rate limit) ──────
+  // ── Chart lazy loading (batches of 2) ────────────────────────────────────────
 
   useEffect(() => {
+    if (isMobile) return  // skip chart loading on mobile
     let cancelled = false
     const toLoad = stocks.filter(s => !requestedCharts.current.has(s.code))
     toLoad.forEach(s => requestedCharts.current.add(s.code))
@@ -255,9 +285,9 @@ export default function JapanStocks() {
     }
     run()
     return () => { cancelled = true }
-  }, [stocks])
+  }, [stocks, isMobile])
 
-  // ── Action handlers ─────────────────────────────────────────────────────────
+  // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleAction = async (apiFn) => {
     setActionErr('')
@@ -271,9 +301,7 @@ export default function JapanStocks() {
   }
 
   const handleSort = col => {
-    setSortBy(prev => ({
-      by: col, dir: prev.by === col && prev.dir === 'asc' ? 'desc' : 'asc',
-    }))
+    setSortBy(prev => ({ by: col, dir: prev.by === col && prev.dir === 'asc' ? 'desc' : 'asc' }))
     setPage(1)
   }
 
@@ -283,64 +311,68 @@ export default function JapanStocks() {
     setPage(1)
   }
 
+  const handleFilterChange = (type, value) => {
+    if (type === 'market') setFilterMarket(value)
+    else setFilterSector(value)
+    setPage(1)
+  }
+
   const totalPages = Math.ceil(total / LIMIT)
   const apiOk = status?.api_configured
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Column definitions ───────────────────────────────────────────────────────
 
-  const COLS = [
-    { col: 'code',            label: t('jp_col_code'),    width: '80px'  },
-    { col: 'name',            label: t('jp_col_name'),    width: 'auto'  },
-    { col: 'market',          label: t('jp_col_market'),  width: '100px' },
-    { col: 'sector',          label: t('jp_col_sector'),  width: '150px' },
-    { col: 'current_price',   label: t('jp_col_price'),      width: '110px', right: true },
+  const COLS_DESKTOP = [
+    { col: 'code',            label: t('jp_col_code'),       width: '80px'  },
+    { col: 'name',            label: t('jp_col_name'),       width: 'auto'  },
+    { col: 'market',          label: t('jp_col_market'),     width: '100px' },
+    { col: 'sector',          label: t('jp_col_sector'),     width: '150px' },
+    { col: 'current_price',   label: t('jp_col_price'),      width: '100px', right: true },
     { col: 'change_6m',       label: t('jp_col_change'),     width: '110px', right: true },
     { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '110px', right: true },
-    { col: 'price_updated_at',label: t('jp_col_updated'),    width: '130px' },
+    { col: 'price_updated_at',label: t('jp_col_updated'),    width: '120px' },
   ]
 
-  return (
-    <div style={{ padding: '24px', maxWidth: 1500, margin: '0 auto' }}>
+  const COLS_MOBILE = [
+    { col: 'name',            label: t('jp_col_name'),       width: 'auto'  },
+    { col: 'current_price',   label: t('jp_col_price'),      width: '90px',  right: true },
+    { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '90px',  right: true },
+    { col: 'price_updated_at',label: t('jp_col_updated'),    width: '90px' },
+  ]
 
-      {/* ── Page title ── */}
-      <div style={{ marginBottom: 20 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 2 }}>{t('jp_title')}</h1>
+  const COLS = isMobile ? COLS_MOBILE : COLS_DESKTOP
+  const colSpan = COLS.length + (isMobile ? 0 : 1) // +1 for chart col on desktop
+
+  // ── Render ───────────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{ padding: isMobile ? '12px' : '24px', maxWidth: 1500, margin: '0 auto' }}>
+
+      {/* Page title */}
+      <div style={{ marginBottom: 16 }}>
+        <h1 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, marginBottom: 2 }}>{t('jp_title')}</h1>
         {!apiOk && status && (
           <div style={{ fontSize: 13, color: 'var(--amber)', marginTop: 4 }}>
             ⚠ JQUANTS_API_KEY not configured in .env
           </div>
         )}
-        {actionErr && (
-          <div style={{ fontSize: 13, color: 'var(--red)', marginTop: 4 }}>{actionErr}</div>
-        )}
+        {actionErr && <div style={{ fontSize: 13, color: 'var(--red)', marginTop: 4 }}>{actionErr}</div>}
       </div>
 
-      {/* ── Two operation cards ── */}
-      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
-        <OpCard
-          label={t('jp_op_listings')}
-          status={status?.listings}
-          disabled={!apiOk}
-          onStart={() => handleAction(refreshJpListings)}
-          t={t}
-        />
-        <OpCard
-          label={t('jp_op_prices')}
-          status={status?.prices}
-          disabled={!apiOk}
-          onStart={() => handleAction(refreshJpPrices)}
-          t={t}
-        />
+      {/* Operation cards */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <OpCard label={t('jp_op_listings')} status={status?.listings} disabled={!apiOk} onStart={() => handleAction(refreshJpListings)} t={t} />
+        <OpCard label={t('jp_op_prices')}   status={status?.prices}   disabled={!apiOk} onStart={() => handleAction(refreshJpPrices)}   t={t} />
       </div>
 
-      {/* ── Search bar ── */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      {/* Search + Filters */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
         <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8 }}>
           <input
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
             placeholder={t('jp_search_ph')}
-            style={{ width: 260 }}
+            style={{ width: isMobile ? 160 : 240 }}
           />
           <button type="submit" style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-1)' }}>
             {t('jp_search')}
@@ -353,88 +385,149 @@ export default function JapanStocks() {
           )}
         </form>
 
-        <div style={{ flex: 1 }} />
+        <FilterSelect
+          label={t('jp_filter_market')}
+          value={filterMarket}
+          onChange={v => handleFilterChange('market', v)}
+          options={filterOptions.markets}
+          allLabel={t('jp_filter_all')}
+        />
+        <FilterSelect
+          label={t('jp_filter_sector')}
+          value={filterSector}
+          onChange={v => handleFilterChange('sector', v)}
+          options={filterOptions.sectors}
+          allLabel={t('jp_filter_all')}
+        />
 
-        {/* Chart legend */}
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--text-3)' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#22c55e" strokeWidth="1.5"/></svg>
-            {t('jp_legend_price')}
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#3b82f6" strokeWidth="1.5"/></svg>
-            {t('jp_legend_ma6')}
-          </span>
-        </div>
+        {!isMobile && (
+          <>
+            <div style={{ flex: 1 }} />
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', fontSize: 11, color: 'var(--text-3)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#22c55e" strokeWidth="1.5"/></svg>
+                {t('jp_legend_price')}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <svg width="20" height="8"><line x1="0" y1="4" x2="20" y2="4" stroke="#3b82f6" strokeWidth="1.5"/></svg>
+                {t('jp_legend_ma6')}
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* ── Table ── */}
+      {/* Table */}
       <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r)', overflow: 'hidden', background: 'var(--bg-surface)' }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: isMobile ? 12 : 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
                 {COLS.map(c => <Th key={c.col} {...c} sortBy={sortBy} onSort={handleSort} />)}
-                <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-2)', fontWeight: 400, fontSize: 12, width: '180px', whiteSpace: 'nowrap' }}>
-                  {t('jp_col_chart')}
-                </th>
+                {!isMobile && (
+                  <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-2)', fontWeight: 400, fontSize: 12, width: '180px', whiteSpace: 'nowrap' }}>
+                    {t('jp_col_chart')}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {loading && stocks.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>{t('loading')}</td></tr>
+                <tr><td colSpan={colSpan} style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>{t('loading')}</td></tr>
               ) : stocks.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>
+                <tr><td colSpan={colSpan} style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>
                   {!apiOk ? t('jp_no_api_key') : status?.listings?.db_count === 0 ? t('jp_no_data') : t('jp_no_results')}
                 </td></tr>
               ) : stocks.map(stock => {
-                const change = stock.change_6m
-                const absChange = stock.abs_change_6m
-                const changeColor = change == null ? 'var(--text-3)' : change >= 0 ? 'var(--green)' : 'var(--red)'
+                const change     = stock.change_6m
+                const absChange  = stock.abs_change_6m
+                const isApprox   = stock.change_months != null && stock.change_months < 6
+                const changeColor    = change    == null ? 'var(--text-3)' : change    >= 0 ? 'var(--green)' : 'var(--red)'
                 const absChangeColor = absChange == null ? 'var(--text-3)' : absChange >= 0 ? 'var(--green)' : 'var(--red)'
                 const chart = chartData[stock.code]
 
                 return (
-                  <tr key={stock.code} style={{ borderBottom: '1px solid var(--border)' }}
+                  <tr
+                    key={stock.code}
+                    onClick={() => onSelectStock?.(stock.code)}
+                    style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
                     onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-card-h)'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: 'var(--blue)', whiteSpace: 'nowrap' }}>
-                      {stock.code}
-                    </td>
+                    {/* Code — desktop only */}
+                    {!isMobile && (
+                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: 'var(--blue)', whiteSpace: 'nowrap' }}>
+                        {stock.code}
+                      </td>
+                    )}
+
+                    {/* Name */}
                     <td style={{ padding: '8px 12px' }}>
-                      <div style={{ fontWeight: 500, lineHeight: 1.3 }}>{stock.name}</div>
-                      {stock.name_en && stock.name_en !== stock.name && (
+                      <div style={{ fontWeight: 500, lineHeight: 1.3 }}>
+                        {isMobile && <span style={{ fontSize: 10, color: 'var(--blue)', marginRight: 6, fontFamily: 'monospace' }}>{stock.code}</span>}
+                        {stock.name}
+                      </div>
+                      {!isMobile && stock.name_en && stock.name_en !== stock.name && (
                         <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 1 }}>{stock.name_en}</div>
                       )}
                     </td>
-                    <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{stock.market || '—'}</td>
-                    <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-2)' }}>{stock.sector || '—'}</td>
+
+                    {/* Market — desktop only */}
+                    {!isMobile && (
+                      <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{stock.market || '—'}</td>
+                    )}
+
+                    {/* Sector — desktop only */}
+                    {!isMobile && (
+                      <td style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-2)' }}>{stock.sector || '—'}</td>
+                    )}
+
+                    {/* Price */}
                     <td style={{ padding: '8px 12px', fontFamily: 'monospace', textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {stock.current_price != null
                         ? `¥${Number(stock.current_price).toLocaleString('ja-JP')}`
                         : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {change != null
-                        ? <span style={{ color: changeColor, fontWeight: 600 }}>{change >= 0 ? '+' : ''}{Number(change).toFixed(2)}%</span>
-                        : <span style={{ color: 'var(--text-3)' }}>—</span>}
-                    </td>
+
+                    {/* 6-Mo Change % — desktop only */}
+                    {!isMobile && (
+                      <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {change != null
+                          ? <span style={{ color: changeColor, fontWeight: 600 }}>{change >= 0 ? '+' : ''}{Number(change).toFixed(2)}%</span>
+                          : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      </td>
+                    )}
+
+                    {/* 6-Mo Change ¥ + alert */}
                     <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                      {absChange != null
-                        ? <span style={{ color: absChangeColor, fontWeight: 600 }}>{absChange >= 0 ? '+' : ''}¥{Number(absChange).toLocaleString('ja-JP', { minimumFractionDigits: 0, maximumFractionDigits: 1 })}</span>
-                        : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                      {absChange != null ? (
+                        <span style={{ color: absChangeColor, fontWeight: 600 }}>
+                          {absChange >= 0 ? '+' : ''}¥{Number(absChange).toLocaleString('ja-JP', { maximumFractionDigits: 0 })}
+                          {isApprox && (
+                            <span
+                              title={t('jp_approx_data').replace('{n}', stock.change_months)}
+                              style={{ marginLeft: 4, fontSize: 11, color: 'var(--amber)' }}
+                            >⚠</span>
+                          )}
+                        </span>
+                      ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
+
+                    {/* Updated */}
                     <td style={{ padding: '8px 12px' }}>
                       <UpdatedAt iso={stock.price_updated_at} noDataLabel={t('jp_no_price_data')} />
                     </td>
-                    <td style={{ padding: '4px 12px' }}>
-                      {chart && chart.length > 0
-                        ? <Sparkline data={chart} width={160} height={38} />
-                        : <div style={{ width: 160, height: 38, display: 'flex', alignItems: 'center', color: 'var(--text-3)', fontSize: 11 }}>
-                            {requestedCharts.current.has(stock.code) && !chart ? '…' : '—'}
-                          </div>}
-                    </td>
+
+                    {/* Chart — desktop only */}
+                    {!isMobile && (
+                      <td style={{ padding: '4px 12px' }}>
+                        {chart && chart.length > 0
+                          ? <Sparkline data={chart} width={160} height={38} />
+                          : <div style={{ width: 160, height: 38, display: 'flex', alignItems: 'center', color: 'var(--text-3)', fontSize: 11 }}>
+                              {requestedCharts.current.has(stock.code) && !chart ? '…' : '—'}
+                            </div>}
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -443,7 +536,7 @@ export default function JapanStocks() {
         </div>
       </div>
 
-      {/* ── Pagination ── */}
+      {/* Pagination */}
       {totalPages > 1 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16 }}>
           {[['«', 1], ['‹', page - 1]].map(([label, target]) => (

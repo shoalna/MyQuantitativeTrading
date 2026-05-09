@@ -409,20 +409,30 @@ async def refresh_prices(
         prices = [m.get(code) for m in monthly_maps]  # [P0, P1, ..., P6]
         current_price = prices[0]
 
-        # Compute month-over-month % change for each of the 6 pairs
+        # Compute consecutive month-over-month % changes from available pairs
         changes = []
         for i in range(6):
             p_now = prices[i]
             p_prev = prices[i + 1]
             if p_now and p_prev and p_prev != 0:
                 changes.append((p_now - p_prev) / p_prev * 100)
-
         mean_change = sum(changes) / len(changes) if changes else None
-        # price_6m_ago is the furthest month we have (index 6)
-        price_6m_ago = prices[6] if len(prices) > 6 else None
-        abs_change = (current_price - price_6m_ago) if current_price and price_6m_ago else None
 
-        records.append((code, current_price, price_6m_ago, mean_change, abs_change, now))
+        # price_6m_ago is the true 6-month-ago price (may be None)
+        price_6m_ago = prices[6] if len(prices) > 6 else None
+
+        # For abs_change, use oldest available monthly price as reference.
+        # Walk backwards from month 6 to find the oldest price we have.
+        ref_price: Optional[float] = None
+        change_months: Optional[int] = None
+        for i in range(6, 0, -1):
+            if prices[i] is not None:
+                ref_price = prices[i]
+                change_months = i
+                break
+        abs_change = (current_price - ref_price) if current_price and ref_price else None
+
+        records.append((code, current_price, price_6m_ago, mean_change, abs_change, change_months, now))
 
     if on_step:
         await on_step(f"Writing {len(records)} summaries to database…", len(records))
@@ -430,13 +440,14 @@ async def refresh_prices(
     async with pool.acquire() as conn:
         await conn.executemany(
             """
-            INSERT INTO jp_stock_summary (code, current_price, price_6m_ago, change_6m, abs_change_6m, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO jp_stock_summary (code, current_price, price_6m_ago, change_6m, abs_change_6m, change_months, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (code) DO UPDATE SET
                 current_price = EXCLUDED.current_price,
                 price_6m_ago  = EXCLUDED.price_6m_ago,
                 change_6m     = EXCLUDED.change_6m,
                 abs_change_6m = EXCLUDED.abs_change_6m,
+                change_months = EXCLUDED.change_months,
                 updated_at    = EXCLUDED.updated_at
             """,
             records,
@@ -515,5 +526,132 @@ async def get_chart_data(pool, client: JQuantsClient, code: str) -> list[dict]:
             """,
             code, result, datetime.utcnow(),
         )
+
+    return result
+
+
+# ── Wikipedia & stock detail ───────────────────────────────────────────────────
+
+async def fetch_wikipedia_summary(company_name: str) -> dict:
+    """Search Japanese Wikipedia for the company and return intro extract."""
+    # Strip corporate suffixes that rarely appear in article titles
+    search_name = (
+        company_name
+        .replace("株式会社", "").replace("（株）", "").replace("(株)", "")
+        .replace("合同会社", "").strip()
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            sr = await http.get(
+                "https://ja.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "list": "search",
+                    "srsearch": search_name, "srlimit": 1,
+                    "format": "json", "utf8": 1,
+                },
+            )
+            sr.raise_for_status()
+            results = sr.json().get("query", {}).get("search", [])
+            if not results:
+                return {"found": False, "title": None, "extract": None, "url": None}
+            title = results[0]["title"]
+
+            er = await http.get(
+                "https://ja.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "prop": "extracts",
+                    "exintro": 1, "explaintext": 1,
+                    "titles": title, "format": "json", "utf8": 1,
+                },
+            )
+            er.raise_for_status()
+            pages = er.json().get("query", {}).get("pages", {})
+            page = next(iter(pages.values()), {})
+            extract = page.get("extract", "")
+            return {
+                "found": bool(extract),
+                "title": title,
+                "extract": extract,
+                "url": f"https://ja.wikipedia.org/wiki/{title.replace(' ', '_')}",
+            }
+    except Exception as exc:
+        logger.warning(f"Wikipedia fetch failed for '{company_name}': {exc}")
+        return {"found": False, "title": None, "extract": None, "url": None}
+
+
+async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> dict:
+    """
+    Return full company detail: listing info, 90-day daily prices (DB-first),
+    and Wikipedia summary.
+    """
+    today = date.today()
+    ninety_days_ago = today - timedelta(days=90)
+
+    async with pool.acquire() as conn:
+        listing = await conn.fetchrow(
+            "SELECT code, name, name_en, sector, market FROM jp_listings WHERE code = $1", code
+        )
+        summary = await conn.fetchrow(
+            """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at
+               FROM jp_stock_summary WHERE code = $1""",
+            code,
+        )
+        price_rows = await conn.fetch(
+            """SELECT date, open, high, low, close, volume
+               FROM jp_daily_prices WHERE code = $1 AND date >= $2 ORDER BY date""",
+            code, ninety_days_ago,
+        )
+
+    # API fallback for daily prices if DB has no recent data
+    if not price_rows and client is not None:
+        try:
+            raw = await client.get_daily_quotes(
+                code=code,
+                from_date=_to_yyyymmdd(ninety_days_ago),
+                to_date=_to_yyyymmdd(today),
+            )
+            quotes = sorted((_normalize_quote(r) for r in raw), key=lambda x: x["date"])
+            await _store_daily_prices(pool, quotes)
+            async with pool.acquire() as conn:
+                price_rows = await conn.fetch(
+                    "SELECT date, open, high, low, close, volume FROM jp_daily_prices "
+                    "WHERE code = $1 AND date >= $2 ORDER BY date",
+                    code, ninety_days_ago,
+                )
+        except Exception as exc:
+            logger.warning(f"Price fetch failed for {code}: {exc}")
+
+    daily_prices = [
+        {
+            "date": r["date"].isoformat(),
+            "open":   float(r["open"])   if r["open"]   is not None else None,
+            "high":   float(r["high"])   if r["high"]   is not None else None,
+            "low":    float(r["low"])    if r["low"]    is not None else None,
+            "close":  float(r["close"])  if r["close"]  is not None else None,
+            "volume": r["volume"],
+        }
+        for r in price_rows
+    ]
+
+    wikipedia = await fetch_wikipedia_summary(listing["name"]) if listing else {"found": False}
+
+    return {
+        "code": code,
+        "name":     listing["name"]    if listing else code,
+        "name_en":  listing["name_en"] if listing else "",
+        "sector":   listing["sector"]  if listing else "",
+        "market":   listing["market"]  if listing else "",
+        "current_price": float(summary["current_price"]) if summary and summary["current_price"] is not None else None,
+        "change_6m":     float(summary["change_6m"])     if summary and summary["change_6m"]     is not None else None,
+        "abs_change_6m": float(summary["abs_change_6m"]) if summary and summary["abs_change_6m"] is not None else None,
+        "change_months": summary["change_months"]         if summary else None,
+        "price_updated_at": (
+            summary["updated_at"].replace(tzinfo=None).isoformat() + "Z"
+            if summary and summary["updated_at"] else None
+        ),
+        "daily_prices": daily_prices,
+        "wikipedia":    wikipedia,
+        "fetched_at":   datetime.utcnow().isoformat() + "Z",
+    }
 
     return result

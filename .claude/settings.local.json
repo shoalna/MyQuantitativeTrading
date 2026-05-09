@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://localhost:8001/health)",
+      "Bash(curl -s http://localhost:8001/sectors)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose *)",
+      "Bash(curl -s -o /dev/null -w \"frontend HTTP %{http_code}\" http://localhost:3001)",
+      "Bash(curl -s -X POST http://localhost:8001/sectors -H \"Content-Type: application/json\" -d '{\"name\":\"AI\",\"top_n\":5}')",
+      "Bash(curl -s http://localhost:8001/jobs/3)",
+      "Bash(python3 -m json.tool)",
+      "WebFetch(domain:api.jquants.com)",
+      "WebFetch(domain:jpx-jquants.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}
