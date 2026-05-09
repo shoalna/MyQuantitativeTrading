@@ -602,8 +602,10 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             code, ninety_days_ago,
         )
 
-    # API fallback for daily prices if DB has no recent data
-    if not price_rows and client is not None:
+    # API fallback when daily data is absent or too sparse (refresh_prices stores
+    # only ~7 month-end snapshots, which is not enough for a candlestick chart).
+    needs_fetch = len(price_rows) < 20
+    if needs_fetch and client is not None:
         try:
             raw = await client.get_daily_quotes(
                 code=code,
