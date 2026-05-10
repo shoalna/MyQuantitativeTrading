@@ -232,6 +232,7 @@ export default function JapanStockDetail({ code, onBack }) {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]         = useState(null)
   const [period, setPeriod]       = useState(90)
+  const [wikiLang, setWikiLang]   = useState(null)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -393,42 +394,61 @@ export default function JapanStockDetail({ code, onBack }) {
       </Section>
 
       {/* ── Wikipedia ── */}
-      <Section icon="📖" title={t('jp_detail_wiki')}>
-        {detail.wikipedia?.found && detail.wikipedia.extract ? (
-          <div>
-            {detail.wikipedia.lang && (
-              <span style={{
-                fontSize: 11, padding: '2px 6px', borderRadius: 4,
-                background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                color: 'var(--text-2)', marginBottom: 8, display: 'inline-block',
-              }}>
-                {detail.wikipedia.lang === 'en' ? 'English' : '日本語'}
-              </span>
+      {(() => {
+        const tr = detail.wikipedia?.translations || {}
+        const available = ['en', 'ja', 'zh'].filter(l => tr[l]?.extract)
+        const effective = (wikiLang && available.includes(wikiLang))
+          ? wikiLang
+          : available.includes(lang) ? lang : available[0] || null
+        const wikiData = effective ? tr[effective] : null
+        const LANG_LABELS = { en: 'EN', ja: '日本語', zh: '中文' }
+        return (
+          <Section icon="📖" title={t('jp_detail_wiki')}>
+            {available.length > 0 ? (
+              <div>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+                  {['en', 'ja', 'zh'].map(l => {
+                    const on = effective === l
+                    const has = available.includes(l)
+                    return (
+                      <button key={l} onClick={() => has && setWikiLang(l)} style={{
+                        padding: '3px 10px', fontSize: 12, borderRadius: 4,
+                        border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
+                        background: on ? 'var(--blue)' : 'var(--bg-surface)',
+                        color: on ? '#fff' : has ? 'var(--text-1)' : 'var(--text-3)',
+                        cursor: has ? 'pointer' : 'default', fontWeight: on ? 600 : 400,
+                      }}>
+                        {LANG_LABELS[l]}
+                      </button>
+                    )
+                  })}
+                </div>
+                {wikiData && (
+                  <>
+                    <div style={{
+                      maxHeight: 280, overflowY: 'auto',
+                      fontSize: 13, lineHeight: 1.75, color: 'var(--text-1)',
+                      background: 'var(--bg-surface)', padding: '12px 16px',
+                      borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
+                      whiteSpace: 'pre-wrap',
+                    }}>
+                      {wikiData.extract}
+                    </div>
+                    {wikiData.url && (
+                      <a href={wikiData.url} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8, display: 'inline-block' }}>
+                        {t('jp_wiki_read_more')}
+                      </a>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <NoContent label={t('jp_detail_no_content')} />
             )}
-            <div style={{
-              maxHeight: 280, overflowY: 'auto', marginTop: 6,
-              fontSize: 13, lineHeight: 1.75, color: 'var(--text-1)',
-              background: 'var(--bg-surface)', padding: '12px 16px',
-              borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
-              whiteSpace: 'pre-wrap',
-            }}>
-              {detail.wikipedia.extract}
-            </div>
-            {detail.wikipedia.url && (
-              <a
-                href={detail.wikipedia.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8, display: 'inline-block' }}
-              >
-                {t('jp_wiki_read_more')}
-              </a>
-            )}
-          </div>
-        ) : (
-          <NoContent label={t('jp_detail_no_content')} />
-        )}
-      </Section>
+          </Section>
+        )
+      })()}
 
       {/* ── Placeholder sections ── */}
       {[

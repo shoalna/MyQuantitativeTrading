@@ -1,5 +1,6 @@
 import asyncio
 import calendar
+import json
 import logging
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
@@ -771,59 +772,107 @@ def _clean_ja_name(name: str) -> str:
         .replace("合同会社", "").replace("有限会社", "").strip()
     )
 
-async def _wiki_fetch(http: httpx.AsyncClient, base_url: str, search_term: str) -> dict | None:
-    """Search one Wikipedia domain and return the intro extract, or None if not found."""
-    sr = await http.get(
+_WIKI_BASES = {
+    "en": "https://en.wikipedia.org",
+    "ja": "https://ja.wikipedia.org",
+    "zh": "https://zh.wikipedia.org",
+}
+_WIKI_HEADERS = {"User-Agent": "MyQuantitativeTrading/1.0 (research tool)"}
+
+async def _wiki_search(http: httpx.AsyncClient, base_url: str, term: str) -> str | None:
+    """Search Wikipedia and return the best-matching article title, or None."""
+    r = await http.get(
         f"{base_url}/w/api.php",
-        params={"action": "query", "list": "search", "srsearch": search_term,
+        params={"action": "query", "list": "search", "srsearch": term,
                 "srlimit": 1, "format": "json", "utf8": 1},
-        headers={"User-Agent": "MyQuantitativeTrading/1.0 (research tool)"},
+        headers=_WIKI_HEADERS,
     )
-    sr.raise_for_status()
-    results = sr.json().get("query", {}).get("search", [])
-    if not results:
-        return None
-    title = results[0]["title"]
-    er = await http.get(
+    r.raise_for_status()
+    results = r.json().get("query", {}).get("search", [])
+    return results[0]["title"] if results else None
+
+async def _wiki_extract(http: httpx.AsyncClient, base_url: str, title: str) -> str | None:
+    """Fetch the intro extract for a known article title."""
+    r = await http.get(
         f"{base_url}/w/api.php",
         params={"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
                 "titles": title, "format": "json", "utf8": 1},
-        headers={"User-Agent": "MyQuantitativeTrading/1.0 (research tool)"},
+        headers=_WIKI_HEADERS,
     )
-    er.raise_for_status()
-    pages = er.json().get("query", {}).get("pages", {})
-    extract = next(iter(pages.values()), {}).get("extract", "")
-    if not extract:
-        return None
-    lang = "en" if "en.wikipedia" in base_url else "ja"
-    return {
-        "found": True,
-        "title": title,
-        "extract": extract,
-        "url": f"{base_url}/wiki/{title.replace(' ', '_')}",
-        "lang": lang,
-    }
+    r.raise_for_status()
+    pages = r.json().get("query", {}).get("pages", {})
+    return next(iter(pages.values()), {}).get("extract") or None
 
-async def fetch_wikipedia_summary(name_en: str, name_ja: str) -> dict:
-    """Try English Wikipedia first, fall back to Japanese Wikipedia."""
-    _not_found = {"found": False, "title": None, "extract": None, "url": None, "lang": None}
+async def _wiki_langlinks(http: httpx.AsyncClient, base_url: str, title: str) -> dict[str, str]:
+    """Return {lang_code: article_title} for interlanguage links of a given article."""
+    r = await http.get(
+        f"{base_url}/w/api.php",
+        params={"action": "query", "titles": title, "prop": "langlinks",
+                "lllimit": "max", "format": "json", "utf8": 1},
+        headers=_WIKI_HEADERS,
+    )
+    r.raise_for_status()
+    pages = r.json().get("query", {}).get("pages", {})
+    links = next(iter(pages.values()), {}).get("langlinks", [])
+    return {ll["lang"]: ll["*"] for ll in links}
+
+async def fetch_wikipedia_all_langs(name_en: str, name_ja: str) -> dict:
+    """
+    Fetch Wikipedia intro extracts in en, ja, zh using interlanguage links.
+    Returns {lang: {title, extract, url}} for each language found.
+    English is tried first; Japanese is the fallback primary source.
+    """
+    results: dict = {}
     try:
-        async with httpx.AsyncClient(timeout=10) as http:
+        async with httpx.AsyncClient(timeout=15) as http:
+            # 1. Find the primary article (English first, Japanese fallback)
+            primary_lang = primary_title = primary_base = None
             if name_en:
                 cleaned = _clean_en_name(name_en)
                 if cleaned:
-                    result = await _wiki_fetch(http, "https://en.wikipedia.org", cleaned)
-                    if result:
-                        return result
-            if name_ja:
+                    t = await _wiki_search(http, _WIKI_BASES["en"], cleaned)
+                    if t:
+                        ex = await _wiki_extract(http, _WIKI_BASES["en"], t)
+                        if ex:
+                            results["en"] = {"title": t, "extract": ex,
+                                             "url": f"{_WIKI_BASES['en']}/wiki/{t.replace(' ', '_')}"}
+                            primary_lang, primary_title, primary_base = "en", t, _WIKI_BASES["en"]
+            if not primary_lang and name_ja:
                 cleaned = _clean_ja_name(name_ja)
                 if cleaned:
-                    result = await _wiki_fetch(http, "https://ja.wikipedia.org", cleaned)
-                    if result:
-                        return result
+                    t = await _wiki_search(http, _WIKI_BASES["ja"], cleaned)
+                    if t:
+                        ex = await _wiki_extract(http, _WIKI_BASES["ja"], t)
+                        if ex:
+                            results["ja"] = {"title": t, "extract": ex,
+                                             "url": f"{_WIKI_BASES['ja']}/wiki/{t.replace(' ', '_')}"}
+                            primary_lang, primary_title, primary_base = "ja", t, _WIKI_BASES["ja"]
+            if not primary_lang:
+                return results
+
+            # 2. Get interlanguage links from the primary article
+            lang_map = await _wiki_langlinks(http, primary_base, primary_title)
+
+            # 3. Fetch each missing target language via its linked title
+            for tl in ("en", "ja", "zh"):
+                if tl in results:
+                    continue
+                linked_title = lang_map.get(tl)
+                if not linked_title:
+                    continue
+                try:
+                    ex = await _wiki_extract(http, _WIKI_BASES[tl], linked_title)
+                    if ex:
+                        results[tl] = {
+                            "title": linked_title,
+                            "extract": ex,
+                            "url": f"{_WIKI_BASES[tl]}/wiki/{linked_title.replace(' ', '_')}",
+                        }
+                except Exception:
+                    pass
     except Exception as exc:
         logger.warning(f"Wikipedia fetch failed for '{name_en}' / '{name_ja}': {exc}")
-    return _not_found
+    return results
 
 
 async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> dict:
@@ -837,7 +886,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     async with pool.acquire() as conn:
         listing = await conn.fetchrow(
             """SELECT code, name, name_en, sector, market,
-                      wiki_title, wiki_summary, wiki_url, wiki_lang, wiki_fetched_at
+                      wiki_fetched_at, wiki_translations
                FROM jp_listings WHERE code = $1""",
             code,
         )
@@ -891,26 +940,18 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         fetched_at = listing["wiki_fetched_at"]
         cache_age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
         if cache_age is None or cache_age > 30:
-            wikipedia = await fetch_wikipedia_summary(listing["name_en"] or "", listing["name"])
+            translations = await fetch_wikipedia_all_langs(listing["name_en"] or "", listing["name"])
             async with pool.acquire() as conn:
                 await conn.execute(
-                    """UPDATE jp_listings
-                       SET wiki_title=$1, wiki_summary=$2, wiki_url=$3, wiki_lang=$4,
-                           wiki_fetched_at=NOW()
-                       WHERE code=$5""",
-                    wikipedia.get("title"), wikipedia.get("extract"),
-                    wikipedia.get("url"), wikipedia.get("lang"), code,
+                    "UPDATE jp_listings SET wiki_translations=$1, wiki_fetched_at=NOW() WHERE code=$2",
+                    json.dumps(translations), code,
                 )
         else:
-            wikipedia = {
-                "found": bool(listing["wiki_summary"]),
-                "title": listing["wiki_title"],
-                "extract": listing["wiki_summary"],
-                "url": listing["wiki_url"],
-                "lang": listing["wiki_lang"],
-            }
+            raw = listing["wiki_translations"]
+            translations = json.loads(raw) if raw else {}
     else:
-        wikipedia = {"found": False, "title": None, "extract": None, "url": None, "lang": None}
+        translations = {}
+    wikipedia = {"translations": translations}
 
     return {
         "code": code,
