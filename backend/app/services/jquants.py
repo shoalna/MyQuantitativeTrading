@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://api.jquants.com/v2"
 _MASTER_ENDPOINT = "/equities/master"   # V2 company name/code list
 _DAILY_ENDPOINT  = "/equities/bars/daily"
-_FINS_ENDPOINT   = "/fins/statements"
 
 _RATE_LIMIT = 60  # requests per minute (JQuants free plan)
 
@@ -138,19 +137,6 @@ class JQuantsClient:
             "sample_record": records[0] if records else {},
             "field_names": list(records[0].keys()) if records else [],
         }
-
-    async def get_statements(self, code: str) -> list[dict]:
-        """Fetch financial statements from /fins/statements (follows pagination)."""
-        params: dict = {"code": code}
-        all_stmts: list[dict] = []
-        while True:
-            data = await self._get(_FINS_ENDPOINT, params)
-            all_stmts.extend(data.get("statements", []))
-            pk = data.get("pagination_key") or ""
-            if not pk:
-                break
-            params["pagination_key"] = pk
-        return all_stmts
 
     async def get_daily_quotes(
         self,
@@ -767,71 +753,13 @@ async def get_chart_data(pool, client: JQuantsClient, code: str) -> list[dict]:
     return result
 
 
-# ── Financial statements (JQuants /fins/statements) ───────────────────────────
+# ── Financial statements (EDINET) ─────────────────────────────────────────────
 
-def _parse_statements(statements: list[dict]) -> dict:
-    """Parse JQuants statements into display-ready structure (last 5 annual periods)."""
-    annual = [
-        s for s in statements
-        if s.get("TypeOfCurrentPeriod") == "FY" and s.get("CurrentFiscalYearEndDate")
-    ]
-    if not annual:
-        annual = [s for s in statements if s.get("CurrentFiscalYearEndDate")]
+async def get_financial_statements(pool, code: str) -> dict | None:
+    """Return EDINET financial statements (30-day DB cache)."""
+    from app.services.edinet import fetch_edinet_financials
+    from app.config import settings
 
-    # Deduplicate by fiscal year end, newest first, cap at 5
-    seen: set = set()
-    deduped: list = []
-    for s in sorted(annual, key=lambda x: x.get("CurrentFiscalYearEndDate", ""), reverse=True):
-        fy = s["CurrentFiscalYearEndDate"]
-        if fy not in seen:
-            seen.add(fy)
-            deduped.append(s)
-        if len(deduped) >= 5:
-            break
-
-    def to_m(v) -> float | None:
-        if v is None or v == "":
-            return None
-        try:
-            n = float(v)
-            return round(n / 1_000_000, 0) if n != 0 else 0.0
-        except (ValueError, TypeError):
-            return None
-
-    def to_f(v, digits=2) -> float | None:
-        if v is None or v == "":
-            return None
-        try:
-            return round(float(v), digits)
-        except (ValueError, TypeError):
-            return None
-
-    records = []
-    for s in deduped:
-        fy_end = s.get("CurrentFiscalYearEndDate", "")
-        doc_type = s.get("TypeOfDocument", "")
-        is_ifrs = "IFRS" in doc_type or "ifrs" in doc_type.lower()
-        er = to_f(s.get("EquityToAssetRatio"), 4)
-        records.append({
-            "period":       fy_end[:7].replace("-", "/") if fy_end else "—",
-            "fy_end":       fy_end,
-            "is_ifrs":      is_ifrs,
-            "revenue":      to_m(s.get("NetSales")),
-            "op_income":    to_m(s.get("OperatingProfit")),
-            "ord_income":   to_m(s.get("OrdinaryProfit")),
-            "net_income":   to_m(s.get("Profit")),
-            "eps":          to_f(s.get("EarningsPerShare")),
-            "dividend":     to_f(s.get("ResultDividendPerShareAnnual")),
-            "equity":       to_m(s.get("Equity")),
-            "total_assets": to_m(s.get("TotalAssets")),
-            "equity_ratio": round(er * 100, 1) if er is not None else None,
-            "bvps":         to_f(s.get("BookValuePerShare")),
-        })
-    return {"records": records}
-
-
-async def get_financial_statements(pool, client: JQuantsClient, code: str) -> dict | None:
-    """Return cached financial statements (30-day TTL), fetching from JQuants if stale."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT fins_data, fins_fetched_at FROM jp_listings WHERE code = $1", code
@@ -844,23 +772,13 @@ async def get_financial_statements(pool, client: JQuantsClient, code: str) -> di
         if age is not None and age <= 30 and raw:
             return json.loads(raw)
 
-    try:
-        statements = await client.get_statements(code)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (400, 403):
-            logger.info(f"JQuants plan does not include /fins/statements for {code}")
-            return {"plan_error": True, "records": []}
-        raise
-
-    if not statements:
-        return {"records": []}
-
-    fins = _parse_statements(statements)
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE jp_listings SET fins_data=$1, fins_fetched_at=NOW() WHERE code=$2",
-            json.dumps(fins), code,
-        )
+    fins = await fetch_edinet_financials(code, settings.edinet_api_key)
+    if fins:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jp_listings SET fins_data=$1, fins_fetched_at=NOW() WHERE code=$2",
+                json.dumps(fins), code,
+            )
     return fins
 
 
@@ -1065,11 +983,10 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     wikipedia = {"translations": translations}
 
     fins = None
-    if client:
-        try:
-            fins = await get_financial_statements(pool, client, code)
-        except Exception as exc:
-            logger.warning(f"Financial statements fetch failed for {code}: {exc}")
+    try:
+        fins = await get_financial_statements(pool, code)
+    except Exception as exc:
+        logger.warning(f"Financial statements fetch failed for {code}: {exc}")
 
     return {
         "code": code,

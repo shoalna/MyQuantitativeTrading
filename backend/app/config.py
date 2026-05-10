@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     news_api_key: str = ""
     anthropic_api_key: str = ""
     jquants_api_key: str = ""
+    edinet_api_key: str = ""
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
     batch_cron_hour: int = 6
 
