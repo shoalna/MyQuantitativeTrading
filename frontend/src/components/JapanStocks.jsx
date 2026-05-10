@@ -349,9 +349,10 @@ export default function JapanStocks({ onSelectStock }) {
 
   const COLS_MOBILE = [
     { col: 'name',            label: t('jp_col_name'),       width: 'auto',  sticky: true },
-    { col: 'current_price',   label: t('jp_col_price'),      width: '90px',  right: true },
-    { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '90px',  right: true },
-    { col: 'price_updated_at',label: t('jp_col_updated'),    width: '90px' },
+    { col: 'current_price',   label: t('jp_col_price'),      width: '80px',  right: true },
+    { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '80px',  right: true },
+    { col: 'aqr_score',       label: t('jp_col_aqr'),        width: '70px',  right: true },
+    { col: 'price_updated_at',label: t('jp_col_updated'),    width: '80px' },
   ]
 
   const COLS = isMobile ? COLS_MOBILE : COLS_DESKTOP
@@ -530,14 +531,12 @@ export default function JapanStocks({ onSelectStock }) {
                       ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
 
-                    {/* AQR Score — desktop only */}
-                    {!isMobile && (
-                      <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                        {aqrScore != null
-                          ? <span style={{ color: aqrColor, fontWeight: 600 }}>{Number(aqrScore).toFixed(1)}</span>
-                          : <span style={{ color: 'var(--text-3)' }}>—</span>}
-                      </td>
-                    )}
+                    {/* AQR Score */}
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                      {aqrScore != null
+                        ? <span style={{ color: aqrColor, fontWeight: 600 }}>{Number(aqrScore).toFixed(1)}</span>
+                        : <span style={{ color: 'var(--text-3)' }}>—</span>}
+                    </td>
 
                     {/* Updated */}
                     <td style={{ padding: '8px 12px' }}>
