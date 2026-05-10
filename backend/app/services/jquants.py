@@ -477,9 +477,10 @@ async def compute_aqr_scores(pool) -> int:
     """
     async with pool.acquire() as conn:
         # 1. TSMOM — percentile rank of 6m mean-monthly return
+        # PERCENT_RANK() returns double precision; cast to numeric for ROUND
         tsmom_rows = await conn.fetch("""
             SELECT code,
-                   ROUND(PERCENT_RANK() OVER (ORDER BY change_6m NULLS FIRST) * 100, 1) AS score
+                   ROUND((PERCENT_RANK() OVER (ORDER BY change_6m NULLS FIRST) * 100)::numeric, 1) AS score
             FROM jp_stock_summary WHERE change_6m IS NOT NULL
         """)
 
@@ -500,21 +501,22 @@ async def compute_aqr_scores(pool) -> int:
                 GROUP BY code HAVING COUNT(*) >= 2
             )
             SELECT code,
-                   ROUND(
+                   ROUND((
                        CASE WHEN avg_loss = 0 THEN 100.0
                             WHEN avg_gain = 0 THEN   0.0
                             ELSE 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
-                       END, 1) AS rsi2
+                       END)::numeric, 1) AS rsi2
             FROM agg
         """)
 
         # 3. BB Squeeze intensity — requires 15+ consecutive daily prices
+        # STDDEV returns double precision; cast bandwidth chain to numeric
         bb_rows = await conn.fetch("""
             WITH bb AS (
                 SELECT code, date,
-                       AVG(close) OVER w    AS sma20,
-                       STDDEV(close) OVER w AS std20,
-                       COUNT(close) OVER w  AS cnt
+                       AVG(close) OVER w           AS sma20,
+                       STDDEV(close) OVER w        AS std20,
+                       COUNT(close) OVER w          AS cnt
                 FROM jp_daily_prices
                 WHERE date >= CURRENT_DATE - INTERVAL '200 days' AND close IS NOT NULL
                 WINDOW w AS (PARTITION BY code ORDER BY date ROWS 19 PRECEDING)
@@ -522,7 +524,7 @@ async def compute_aqr_scores(pool) -> int:
             bw AS (
                 SELECT code, date,
                        CASE WHEN sma20 > 0 AND cnt >= 15
-                            THEN 4.0 * std20 / sma20 * 100
+                            THEN (4.0 * std20 / sma20 * 100)::numeric
                             ELSE NULL END AS bandwidth
                 FROM bb
             ),
@@ -543,11 +545,12 @@ async def compute_aqr_scores(pool) -> int:
         """)
 
         # 4. Pair trade proxy — sector deviation z-score mapped to 0–100
+        # STDDEV returns double precision; cast the whole expression to numeric
         pair_rows = await conn.fetch("""
             WITH stats AS (
                 SELECT l.sector,
-                       AVG(s.change_6m)               AS mean,
-                       NULLIF(STDDEV(s.change_6m), 0) AS std
+                       AVG(s.change_6m)                         AS mean,
+                       NULLIF(STDDEV(s.change_6m)::numeric, 0)  AS std
                 FROM jp_stock_summary s
                 JOIN jp_listings l ON l.code = s.code
                 WHERE s.change_6m IS NOT NULL
@@ -557,7 +560,7 @@ async def compute_aqr_scores(pool) -> int:
             SELECT s.code,
                    ROUND(LEAST(100.0, GREATEST(0.0,
                        ((s.change_6m - st.mean) / st.std + 3.0) / 6.0 * 100.0
-                   )), 1) AS score
+                   ))::numeric, 1) AS score
             FROM jp_stock_summary s
             JOIN jp_listings l ON l.code = s.code
             JOIN stats st ON st.sector = l.sector
@@ -592,7 +595,7 @@ async def compute_aqr_scores(pool) -> int:
                 WHERE b.mn = 2 AND c.close > 0
             )
             SELECT code,
-                   ROUND(PERCENT_RANK() OVER (ORDER BY ret NULLS FIRST) * 100, 1) AS score
+                   ROUND((PERCENT_RANK() OVER (ORDER BY ret NULLS FIRST) * 100)::numeric, 1) AS score
             FROM ret3m WHERE ret IS NOT NULL
         """)
 
