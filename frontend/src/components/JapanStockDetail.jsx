@@ -107,6 +107,83 @@ function NoContent({ label }) {
   )
 }
 
+// ── 四季報 financial table ────────────────────────────────────────────────────
+
+const _FINS_METRICS = [
+  { key: 'revenue',      fmt: 'M'   },
+  { key: 'op_income',    fmt: 'M'   },
+  { key: 'ord_income',   fmt: 'M',  hideIfrs: true },
+  { key: 'net_income',   fmt: 'M'   },
+  { key: 'eps',          fmt: 'f2'  },
+  { key: 'dividend',     fmt: 'f2'  },
+  { key: 'equity',       fmt: 'M'   },
+  { key: 'total_assets', fmt: 'M'   },
+  { key: 'equity_ratio', fmt: 'pct' },
+  { key: 'bvps',         fmt: 'f2'  },
+]
+
+function fmtFins(val, fmt) {
+  if (val === null || val === undefined) return '—'
+  if (fmt === 'M')   return val === 0 ? '0' : val.toLocaleString()
+  if (fmt === 'f2')  return val.toFixed(2)
+  if (fmt === 'pct') return val.toFixed(1) + '%'
+  return String(val)
+}
+
+function ShikihoTable({ fins, t }) {
+  const { records = [] } = fins || {}
+  if (records.length === 0) return null
+  const isIfrs = records.some(r => r.is_ifrs)
+  const thS = {
+    padding: '6px 10px', fontSize: 11, fontWeight: 500,
+    color: 'var(--text-2)', textAlign: 'right', whiteSpace: 'nowrap',
+    borderBottom: '1px solid var(--border)', background: 'var(--bg-card)',
+  }
+  const labelKeys = {
+    revenue: 'fins_revenue', op_income: 'fins_op_income', ord_income: 'fins_ord_income',
+    net_income: 'fins_net_income', eps: 'fins_eps', dividend: 'fins_dividend',
+    equity: 'fins_equity', total_assets: 'fins_assets', equity_ratio: 'fins_equity_ratio',
+    bvps: 'fins_bvps',
+  }
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>
+        {t('fins_unit_m')} {isIfrs ? '(IFRS)' : '(J-GAAP)'}
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={{ ...thS, textAlign: 'left', minWidth: 110 }}>{t('fins_period')}</th>
+              {records.map(r => (
+                <th key={r.period} style={{ ...thS, minWidth: 88 }}>{r.period}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {_FINS_METRICS.filter(m => !(m.hideIfrs && isIfrs)).map(({ key, fmt }) => (
+              <tr key={key} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ padding: '6px 10px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {t(labelKeys[key])}
+                </td>
+                {records.map((r, i) => (
+                  <td key={i} style={{
+                    padding: '6px 10px', textAlign: 'right', fontFamily: 'monospace',
+                    color: r[key] === null || r[key] === undefined ? 'var(--text-3)' : 'var(--text-1)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {fmtFins(r[key], fmt)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── Strategy score table ──────────────────────────────────────────────────────
 
 function scoreColor(v, invert = false) {
@@ -450,9 +527,19 @@ export default function JapanStockDetail({ code, onBack }) {
         )
       })()}
 
+      {/* ── 四季報 ── */}
+      <Section icon="📊" title={t('jp_detail_shikiho')}>
+        {detail.fins?.plan_error ? (
+          <NoContent label={t('fins_no_plan')} />
+        ) : detail.fins?.records?.length > 0 ? (
+          <ShikihoTable fins={detail.fins} t={t} />
+        ) : (
+          <NoContent label={t('jp_detail_no_content')} />
+        )}
+      </Section>
+
       {/* ── Placeholder sections ── */}
       {[
-        { icon: '📊', key: 'jp_detail_shikiho' },
         { icon: '📰', key: 'jp_detail_news'    },
         { icon: '▶',  key: 'jp_detail_youtube' },
         { icon: '💬', key: 'jp_detail_sns'     },
