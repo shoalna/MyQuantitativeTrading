@@ -454,6 +454,93 @@ async def refresh_prices(
         )
 
     logger.info(f"Updated {len(records)} price summaries")
+    if on_step:
+        await on_step("Computing AQR factor scores…", 0)
+    try:
+        await compute_aqr_scores(pool)
+    except Exception as exc:
+        logger.warning(f"AQR computation failed (non-fatal): {exc}")
+    return len(records)
+
+
+async def compute_aqr_scores(pool) -> int:
+    """
+    Cross-sectional AQR-style factor scores for all stocks in jp_stock_summary.
+    Momentum  (60%): PERCENT_RANK of change_6m (higher MoM return = better).
+    Low-Vol   (40%): PERCENT_RANK of inverse monthly-return std dev (less volatile = better).
+    Updates aqr_score, aqr_mom, aqr_vol in jp_stock_summary.
+    """
+    async with pool.acquire() as conn:
+        mom_rows = await conn.fetch("""
+            SELECT code,
+                   PERCENT_RANK() OVER (ORDER BY change_6m NULLS FIRST) * 100 AS mom_pct
+            FROM jp_stock_summary
+            WHERE change_6m IS NOT NULL
+        """)
+
+        vol_rows = await conn.fetch("""
+            WITH monthly_extremes AS (
+                SELECT code,
+                       DATE_TRUNC('month', date) AS month,
+                       MAX(date) AS last_date
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '7 months'
+                  AND close IS NOT NULL
+                GROUP BY code, DATE_TRUNC('month', date)
+            ),
+            month_prices AS (
+                SELECT me.code, me.month, p.close AS month_close
+                FROM monthly_extremes me
+                JOIN jp_daily_prices p ON p.code = me.code AND p.date = me.last_date
+            ),
+            monthly_returns AS (
+                SELECT code,
+                       month_close / NULLIF(LAG(month_close) OVER (
+                           PARTITION BY code ORDER BY month
+                       ), 0) - 1 AS monthly_ret
+                FROM month_prices
+            ),
+            vol_stats AS (
+                SELECT code, STDDEV(monthly_ret) AS ret_stddev
+                FROM monthly_returns
+                WHERE monthly_ret IS NOT NULL
+                GROUP BY code
+                HAVING COUNT(monthly_ret) >= 2
+            )
+            SELECT code,
+                   PERCENT_RANK() OVER (ORDER BY ret_stddev DESC NULLS LAST) * 100 AS vol_pct
+            FROM vol_stats
+        """)
+
+    mom_map = {r["code"]: float(r["mom_pct"]) for r in mom_rows}
+    vol_map = {r["code"]: float(r["vol_pct"]) for r in vol_rows}
+
+    records = []
+    for code, mom_pct in mom_map.items():
+        vol_pct = vol_map.get(code)
+        score = 0.6 * mom_pct + 0.4 * vol_pct if vol_pct is not None else mom_pct
+        records.append((
+            round(score, 1),
+            round(mom_pct, 1),
+            round(vol_pct, 1) if vol_pct is not None else None,
+            code,
+        ))
+
+    if not records:
+        return 0
+
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.executemany(
+                """
+                UPDATE jp_stock_summary
+                SET aqr_score = $1, aqr_mom = $2, aqr_vol = $3
+                WHERE code = $4
+                """,
+                records,
+            )
+
+    logger.info(f"Computed AQR scores for {len(records)} stocks")
     return len(records)
 
 
@@ -655,5 +742,3 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         "wikipedia":    wikipedia,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
     }
-
-    return result

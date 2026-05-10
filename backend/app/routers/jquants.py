@@ -7,7 +7,7 @@ from app.config import settings
 from app.database import get_pool
 from app.services.jquants import (
     JQuantsClient, get_chart_data, get_stock_detail,
-    refresh_listings, refresh_prices,
+    refresh_listings, refresh_prices, compute_aqr_scores,
     _normalize_quote, _store_daily_prices, _to_yyyymmdd,
 )
 
@@ -32,6 +32,14 @@ _prices_status: dict = {
     "last_run": None,
 }
 
+_aqr_status: dict = {
+    "running": False,
+    "message": "Not started",
+    "count": 0,
+    "error": None,
+    "last_run": None,
+}
+
 _SORT_MAP = {
     "code":               "l.code",
     "name":               "l.name",
@@ -41,6 +49,9 @@ _SORT_MAP = {
     "change_6m":          "s.change_6m",
     "abs_change_6m":      "s.abs_change_6m",
     "price_updated_at":   "s.updated_at",
+    "aqr_score":          "s.aqr_score",
+    "aqr_mom":            "s.aqr_mom",
+    "aqr_vol":            "s.aqr_vol",
 }
 
 
@@ -70,6 +81,25 @@ async def _do_refresh_listings() -> None:
         _listings_status.update({"error": str(exc), "message": f"Error: {exc}"})
     finally:
         _listings_status["running"] = False
+
+
+async def _do_compute_aqr() -> None:
+    if _aqr_status["running"]:
+        return
+    _aqr_status.update({"running": True, "error": None, "message": "Computing AQR scores…"})
+    try:
+        pool = await get_pool()
+        count = await compute_aqr_scores(pool)
+        _aqr_status.update({
+            "count": count,
+            "message": f"Completed — {count} stocks scored",
+            "last_run": datetime.utcnow().isoformat() + "Z",
+        })
+    except Exception as exc:
+        logger.error(f"AQR computation failed: {exc}")
+        _aqr_status.update({"error": str(exc), "message": f"Error: {exc}"})
+    finally:
+        _aqr_status["running"] = False
 
 
 async def _do_refresh_prices() -> None:
@@ -153,6 +183,7 @@ async def get_status():
             "db_count": prices_db_count or 0,
             "db_last_update": prices_db_updated.isoformat() + "Z" if prices_db_updated else None,
         },
+        "aqr": {**_aqr_status},
     }
 
 
@@ -165,6 +196,15 @@ async def trigger_refresh_listings(background_tasks: BackgroundTasks):
         return {"message": "Company list update already in progress"}
     background_tasks.add_task(_do_refresh_listings)
     return {"message": "Company list update started"}
+
+
+@router.post("/compute/aqr")
+async def trigger_compute_aqr(background_tasks: BackgroundTasks):
+    """Compute cross-sectional AQR factor scores (Momentum + Low-Vol) for all stocks."""
+    if _aqr_status["running"]:
+        return {"message": "AQR computation already in progress"}
+    background_tasks.add_task(_do_compute_aqr)
+    return {"message": "AQR score computation started"}
 
 
 @router.post("/refresh/prices")
@@ -221,7 +261,8 @@ async def list_stocks(
             f"""
             SELECT l.code, l.name, l.name_en, l.sector, l.market,
                    s.current_price, s.change_6m, s.abs_change_6m,
-                   s.change_months, s.updated_at AS price_updated_at
+                   s.change_months, s.aqr_score, s.aqr_mom, s.aqr_vol,
+                   s.updated_at AS price_updated_at
             FROM jp_listings l
             LEFT JOIN jp_stock_summary s ON l.code = s.code
             {where_clause}
