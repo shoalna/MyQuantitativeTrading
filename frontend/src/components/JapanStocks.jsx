@@ -180,7 +180,7 @@ function FilterSelect({ label, value, onChange, options, allLabel }) {
   )
 }
 
-// value=[] means "all selected / no filter"
+// value=null means "all selected / no filter"; value=[] means "none checked / no filter"
 function MultiSelect({ label, value, onChange, options, allLabel }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -191,24 +191,23 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
     return () => document.removeEventListener('mousedown', fn)
   }, [])
 
-  const isAll = value.length === 0
-  const isChecked = (opt) => isAll || value.includes(opt)
-  const isFiltering = !isAll
+  const isAll  = value === null
+  const isNone = Array.isArray(value) && value.length === 0
+  const isChecked = (opt) => isAll || (Array.isArray(value) && value.includes(opt))
+  const isFiltering = !isAll && !isNone
 
   const toggle = (opt) => {
     if (isAll) {
-      // All checked → uncheck one → keep all except this one
       onChange(options.filter(o => o !== opt))
     } else {
       const next = value.includes(opt) ? value.filter(v => v !== opt) : [...value, opt]
-      // If all are now checked, collapse back to [] (all)
-      onChange(next.length === options.length ? [] : next)
+      onChange(next.length === options.length ? null : next)
     }
   }
 
-  const summary = isAll
-    ? allLabel
-    : value.length === 1 ? value[0] : `${value.length} / ${options.length}`
+  const summary = isFiltering
+    ? (value.length === 1 ? value[0] : `${value.length} / ${options.length}`)
+    : allLabel
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
@@ -232,17 +231,36 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
           position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 200,
           background: 'var(--bg-card)', border: '1px solid var(--border)',
           borderRadius: 'var(--r-sm)', padding: '4px 0',
-          maxHeight: 260, overflowY: 'auto', minWidth: 220,
+          maxHeight: 300, overflowY: 'auto', minWidth: 220,
           boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
         }}>
-          {isFiltering && (
-            <div
-              onClick={() => onChange([])}
-              style={{ padding: '6px 12px', fontSize: 11, color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+          {/* Select All / Unselect All row */}
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+            <button
+              onClick={() => onChange(null)}
+              disabled={isAll}
+              style={{
+                flex: 1, padding: '6px 8px', fontSize: 11, background: 'none',
+                border: 'none', borderRight: '1px solid var(--border)',
+                color: isAll ? 'var(--text-3)' : 'var(--blue)',
+                cursor: isAll ? 'default' : 'pointer',
+              }}
             >
-              ↺ 全選択に戻す
-            </div>
-          )}
+              ☑ 全選択
+            </button>
+            <button
+              onClick={() => onChange([])}
+              disabled={isNone}
+              style={{
+                flex: 1, padding: '6px 8px', fontSize: 11, background: 'none',
+                border: 'none',
+                color: isNone ? 'var(--text-3)' : 'var(--blue)',
+                cursor: isNone ? 'default' : 'pointer',
+              }}
+            >
+              ☐ 全解除
+            </button>
+          </div>
           {options.map(opt => (
             <label
               key={opt}
@@ -278,7 +296,7 @@ export default function JapanStocks({ onSelectStock }) {
   const [search, setSearch]       = useState(() => ss('jp_search', ''))
   const [searchInput, setSearchInput] = useState(() => ss('jp_search', ''))
   const [filterMarket, setFilterMarket] = useState(() => ss('jp_market', ''))
-  const [filterSector, setFilterSector] = useState(() => ss('jp_sector', []))
+  const [filterSector, setFilterSector] = useState(() => ss('jp_sector', null))
   const [aqrMin, setAqrMin]       = useState(() => ss('jp_aqr_min', null))
   const [aqrMax, setAqrMax]       = useState(() => ss('jp_aqr_max', null))
   const [filterOptions, setFilterOptions] = useState({ markets: [], sectors: [] })
@@ -347,7 +365,7 @@ export default function JapanStocks({ onSelectStock }) {
       const { data } = await getJpStocks({
         page, limit: LIMIT,
         sort_by: sortBy.by, sort_dir: sortBy.dir,
-        search, market: filterMarket, sector: filterSector,
+        search, market: filterMarket, sector: filterSector ?? [],
         ...(aqrMin != null && { aqr_min: aqrMin }),
         ...(aqrMax != null && { aqr_max: aqrMax }),
       })

@@ -273,7 +273,7 @@ async def list_stocks(
 
     async with pool.acquire() as conn:
         total = await conn.fetchval(
-            f"SELECT COUNT(*) FROM jp_listings l {where_clause}",
+            f"SELECT COUNT(*) FROM jp_listings l LEFT JOIN jp_stock_summary s ON l.code = s.code {where_clause}",
             *base_params,
         )
         rows = await conn.fetch(
