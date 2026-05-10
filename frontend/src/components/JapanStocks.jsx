@@ -180,6 +180,7 @@ function FilterSelect({ label, value, onChange, options, allLabel }) {
   )
 }
 
+// value=[] means "all selected / no filter"
 function MultiSelect({ label, value, onChange, options, allLabel }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
@@ -190,8 +191,24 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
     return () => document.removeEventListener('mousedown', fn)
   }, [])
 
-  const toggle = (opt) => onChange(value.includes(opt) ? value.filter(v => v !== opt) : [...value, opt])
-  const summary = value.length === 0 ? allLabel : value.length === 1 ? value[0] : `${value.length} selected`
+  const isAll = value.length === 0
+  const isChecked = (opt) => isAll || value.includes(opt)
+  const isFiltering = !isAll
+
+  const toggle = (opt) => {
+    if (isAll) {
+      // All checked → uncheck one → keep all except this one
+      onChange(options.filter(o => o !== opt))
+    } else {
+      const next = value.includes(opt) ? value.filter(v => v !== opt) : [...value, opt]
+      // If all are now checked, collapse back to [] (all)
+      onChange(next.length === options.length ? [] : next)
+    }
+  }
+
+  const summary = isAll
+    ? allLabel
+    : value.length === 1 ? value[0] : `${value.length} / ${options.length}`
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
@@ -200,9 +217,9 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
         onClick={() => setOpen(v => !v)}
         style={{
           fontSize: 12, padding: '4px 28px 4px 8px',
-          background: value.length ? 'var(--blue)' : 'var(--bg-card)',
+          background: isFiltering ? 'var(--blue)' : 'var(--bg-card)',
           border: '1px solid var(--border)', borderRadius: 'var(--r-sm)',
-          color: value.length ? '#fff' : 'var(--text-1)', cursor: 'pointer',
+          color: isFiltering ? '#fff' : 'var(--text-1)', cursor: 'pointer',
           maxWidth: 200, position: 'relative', textAlign: 'left',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}
@@ -218,12 +235,12 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
           maxHeight: 260, overflowY: 'auto', minWidth: 220,
           boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
         }}>
-          {value.length > 0 && (
+          {isFiltering && (
             <div
               onClick={() => onChange([])}
-              style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-3)', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+              style={{ padding: '6px 12px', fontSize: 11, color: 'var(--blue)', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
             >
-              ✕ Clear all
+              ↺ 全選択に戻す
             </div>
           )}
           {options.map(opt => (
@@ -232,10 +249,10 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '6px 12px', cursor: 'pointer', fontSize: 12,
-                background: value.includes(opt) ? 'var(--bg-surface)' : 'transparent',
+                background: isChecked(opt) ? 'var(--bg-surface)' : 'transparent',
               }}
             >
-              <input type="checkbox" checked={value.includes(opt)} onChange={() => toggle(opt)} style={{ cursor: 'pointer', accentColor: 'var(--blue)' }} />
+              <input type="checkbox" checked={isChecked(opt)} onChange={() => toggle(opt)} style={{ cursor: 'pointer', accentColor: 'var(--blue)' }} />
               {opt}
             </label>
           ))}
@@ -262,6 +279,8 @@ export default function JapanStocks({ onSelectStock }) {
   const [searchInput, setSearchInput] = useState(() => ss('jp_search', ''))
   const [filterMarket, setFilterMarket] = useState(() => ss('jp_market', ''))
   const [filterSector, setFilterSector] = useState(() => ss('jp_sector', []))
+  const [aqrMin, setAqrMin]       = useState(() => ss('jp_aqr_min', null))
+  const [aqrMax, setAqrMax]       = useState(() => ss('jp_aqr_max', null))
   const [filterOptions, setFilterOptions] = useState({ markets: [], sectors: [] })
   const [loading, setLoading]     = useState(false)
 
@@ -278,7 +297,9 @@ export default function JapanStocks({ onSelectStock }) {
   useEffect(() => { try { sessionStorage.setItem('jp_page',   JSON.stringify(page))   } catch {} }, [page])
   useEffect(() => { try { sessionStorage.setItem('jp_search', JSON.stringify(search)) } catch {} }, [search])
   useEffect(() => { try { sessionStorage.setItem('jp_market', JSON.stringify(filterMarket)) } catch {} }, [filterMarket])
-  useEffect(() => { try { sessionStorage.setItem('jp_sector', JSON.stringify(filterSector)) } catch {} }, [filterSector])
+  useEffect(() => { try { sessionStorage.setItem('jp_sector',   JSON.stringify(filterSector)) } catch {} }, [filterSector])
+  useEffect(() => { try { sessionStorage.setItem('jp_aqr_min', JSON.stringify(aqrMin))       } catch {} }, [aqrMin])
+  useEffect(() => { try { sessionStorage.setItem('jp_aqr_max', JSON.stringify(aqrMax))       } catch {} }, [aqrMax])
 
   // ── Load filter options once ─────────────────────────────────────────────────
 
@@ -327,6 +348,8 @@ export default function JapanStocks({ onSelectStock }) {
         page, limit: LIMIT,
         sort_by: sortBy.by, sort_dir: sortBy.dir,
         search, market: filterMarket, sector: filterSector,
+        ...(aqrMin != null && { aqr_min: aqrMin }),
+        ...(aqrMax != null && { aqr_max: aqrMax }),
       })
       setStocks(data.data)
       setTotal(data.total)
@@ -335,7 +358,7 @@ export default function JapanStocks({ onSelectStock }) {
     } finally {
       setLoading(false)
     }
-  }, [page, sortBy, search, filterMarket, filterSector])
+  }, [page, sortBy, search, filterMarket, filterSector, aqrMin, aqrMax])
 
   useEffect(() => { fetchStocks() }, [fetchStocks])
 
@@ -481,6 +504,38 @@ export default function JapanStocks({ onSelectStock }) {
           options={filterOptions.sectors}
           allLabel={t('jp_filter_all')}
         />
+
+        {/* AQR range filter */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+          <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap' }}>AQR</span>
+          {[
+            { val: aqrMin, set: setAqrMin, placeholder: 'Min', otherVal: aqrMax, cmp: (v, o) => o == null || v < o },
+            { val: aqrMax, set: setAqrMax, placeholder: 'Max', otherVal: aqrMin, cmp: (v, o) => o == null || v > o },
+          ].map(({ val, set, placeholder, otherVal, cmp }, idx) => (
+            <select
+              key={idx}
+              value={val ?? ''}
+              onChange={e => { set(e.target.value !== '' ? Number(e.target.value) : null); setPage(1) }}
+              style={{
+                fontSize: 12, padding: '4px 6px',
+                background: val != null ? 'var(--blue)' : 'var(--bg-card)',
+                border: '1px solid var(--border)', borderRadius: 'var(--r-sm)',
+                color: val != null ? '#fff' : 'var(--text-1)', cursor: 'pointer',
+              }}
+            >
+              <option value="">{placeholder}</option>
+              {[0,10,20,30,40,50,60,70,80,90,100].filter(v => cmp(v, otherVal)).map(v => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          ))}
+          {(aqrMin != null || aqrMax != null) && (
+            <button
+              onClick={() => { setAqrMin(null); setAqrMax(null); setPage(1) }}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', fontSize: 13, padding: '0 2px' }}
+            >✕</button>
+          )}
+        </div>
 
         {!isMobile && (
           <>

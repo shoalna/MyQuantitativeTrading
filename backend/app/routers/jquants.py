@@ -133,7 +133,13 @@ async def _do_refresh_prices() -> None:
 _EXCLUDED_MARKETS = {"その他"}
 
 
-def _build_where(search: str, market: str, sectors: list[str]):
+def _build_where(
+    search: str,
+    market: str,
+    sectors: list[str],
+    aqr_min: float | None = None,
+    aqr_max: float | None = None,
+):
     """Return (where_clause, params_list, next_param_index)."""
     # Always exclude markets that carry no meaningful trading data
     conditions: list[str] = ["l.market NOT IN ('その他')"]
@@ -156,6 +162,16 @@ def _build_where(search: str, market: str, sectors: list[str]):
         params.extend(sectors)
         p += len(sectors)
         conditions.append(f"l.sector IN ({placeholders})")
+
+    if aqr_min is not None:
+        params.append(aqr_min)
+        p += 1
+        conditions.append(f"s.aqr_score >= ${p}")
+
+    if aqr_max is not None:
+        params.append(aqr_max)
+        p += 1
+        conditions.append(f"s.aqr_score <= ${p}")
 
     where = f"WHERE {' AND '.join(conditions)}"
     return where, params, p
@@ -245,13 +261,15 @@ async def list_stocks(
     search:   str = Query(""),
     market:   str = Query(""),
     sector:   list[str] = Query(default=[]),
+    aqr_min:  float | None = Query(default=None),
+    aqr_max:  float | None = Query(default=None),
 ):
     pool = await get_pool()
     sort_col = _SORT_MAP.get(sort_by, "l.code")
     order    = "DESC" if sort_dir.lower() == "desc" else "ASC"
     offset   = (page - 1) * limit
 
-    where_clause, base_params, base_p = _build_where(search, market, sector)
+    where_clause, base_params, base_p = _build_where(search, market, sector, aqr_min, aqr_max)
 
     async with pool.acquire() as conn:
         total = await conn.fetchval(
