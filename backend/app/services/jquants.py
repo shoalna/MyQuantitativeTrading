@@ -935,11 +935,11 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         for r in price_rows
     ]
 
-    # Wikipedia: serve from DB cache (30-day TTL), fetch fresh if absent or stale
+    # Wikipedia: serve from DB cache (30-day TTL), fetch fresh if absent/stale/empty
     if listing:
         fetched_at = listing["wiki_fetched_at"]
         cache_age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
-        if cache_age is None or cache_age > 30:
+        if cache_age is None or cache_age > 30 or not listing["wiki_translations"]:
             translations = await fetch_wikipedia_all_langs(listing["name_en"] or "", listing["name"])
             async with pool.acquire() as conn:
                 await conn.execute(
