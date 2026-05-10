@@ -133,7 +133,7 @@ async def _do_refresh_prices() -> None:
 _EXCLUDED_MARKETS = {"その他"}
 
 
-def _build_where(search: str, market: str, sector: str):
+def _build_where(search: str, market: str, sectors: list[str]):
     """Return (where_clause, params_list, next_param_index)."""
     # Always exclude markets that carry no meaningful trading data
     conditions: list[str] = ["l.market NOT IN ('その他')"]
@@ -151,10 +151,11 @@ def _build_where(search: str, market: str, sector: str):
         p += 1
         conditions.append(f"l.market = ${p}")
 
-    if sector:
-        params.append(sector)
-        p += 1
-        conditions.append(f"l.sector = ${p}")
+    if sectors:
+        placeholders = ", ".join(f"${p + i + 1}" for i in range(len(sectors)))
+        params.extend(sectors)
+        p += len(sectors)
+        conditions.append(f"l.sector IN ({placeholders})")
 
     where = f"WHERE {' AND '.join(conditions)}"
     return where, params, p
@@ -243,7 +244,7 @@ async def list_stocks(
     sort_dir: str = Query("asc"),
     search:   str = Query(""),
     market:   str = Query(""),
-    sector:   str = Query(""),
+    sector:   list[str] = Query(default=[]),
 ):
     pool = await get_pool()
     sort_col = _SORT_MAP.get(sort_by, "l.code")

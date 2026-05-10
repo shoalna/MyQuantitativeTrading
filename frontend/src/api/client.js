@@ -27,7 +27,10 @@ export const deleteTarget = (id) => client.delete(`/targets/${id}`)
 export const getJpStatus = () => client.get('/jquants/status')
 export const refreshJpListings = () => client.post('/jquants/refresh/listings')
 export const refreshJpPrices = () => client.post('/jquants/refresh/prices')
-export const getJpStocks = (params) => client.get('/jquants/stocks', { params })
+export const getJpStocks = (params) => client.get('/jquants/stocks', {
+  params,
+  paramsSerializer: { indexes: null },  // sector=A&sector=B (not sector[0]=A)
+})
 export const getJpStockChart = (code) => client.get(`/jquants/stocks/${code}/chart`)
 export const getJpFilters = () => client.get('/jquants/filters')
 export const getJpStockDetail = (code) => client.get(`/jquants/stocks/${code}/detail`)

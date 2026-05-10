@@ -109,12 +109,20 @@ function NoContent({ label }) {
 
 // ── Main detail component ─────────────────────────────────────────────────────
 
+const PERIODS = [
+  { label: '1M', days: 30 },
+  { label: '3M', days: 90 },
+  { label: '6M', days: 180 },
+  { label: '1Y', days: 365 },
+]
+
 export default function JapanStockDetail({ code, onBack }) {
   const { t } = useLang()
   const [detail, setDetail]       = useState(null)
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]         = useState(null)
+  const [period, setPeriod]       = useState(90)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -237,9 +245,37 @@ export default function JapanStockDetail({ code, onBack }) {
 
       {/* ── Daily chart ── */}
       <Section icon="📈" title={t('jp_detail_daily')}>
-        {detail.daily_prices?.length > 0
-          ? <CandlestickChart data={detail.daily_prices} />
-          : <NoContent label={t('jp_detail_no_content')} />}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+          {PERIODS.map(p => {
+            const cutoff = new Date()
+            cutoff.setDate(cutoff.getDate() - p.days)
+            const hasData = detail.daily_prices?.some(d => new Date(d.date) >= cutoff)
+            return (
+              <button
+                key={p.label}
+                onClick={() => setPeriod(p.days)}
+                disabled={!hasData}
+                style={{
+                  fontSize: 11, padding: '3px 10px',
+                  background: period === p.days ? 'var(--blue)' : 'var(--bg-surface)',
+                  color: period === p.days ? '#fff' : hasData ? 'var(--text-2)' : 'var(--text-3)',
+                  border: `1px solid ${period === p.days ? 'var(--blue)' : 'var(--border)'}`,
+                  borderRadius: 'var(--r-sm)', cursor: hasData ? 'pointer' : 'default',
+                }}
+              >
+                {p.label}
+              </button>
+            )
+          })}
+        </div>
+        {(() => {
+          const cutoff = new Date()
+          cutoff.setDate(cutoff.getDate() - period)
+          const filtered = detail.daily_prices?.filter(d => new Date(d.date) >= cutoff) ?? []
+          return filtered.length > 0
+            ? <CandlestickChart data={filtered} />
+            : <NoContent label={t('jp_detail_no_content')} />
+        })()}
       </Section>
 
       {/* ── Wikipedia ── */}

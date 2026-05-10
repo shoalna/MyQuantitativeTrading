@@ -180,6 +180,71 @@ function FilterSelect({ label, value, onChange, options, allLabel }) {
   )
 }
 
+function MultiSelect({ label, value, onChange, options, allLabel }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const fn = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  const toggle = (opt) => onChange(value.includes(opt) ? value.filter(v => v !== opt) : [...value, opt])
+  const summary = value.length === 0 ? allLabel : value.length === 1 ? value[0] : `${value.length} selected`
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+      <span style={{ color: 'var(--text-2)', whiteSpace: 'nowrap' }}>{label}</span>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontSize: 12, padding: '4px 28px 4px 8px',
+          background: value.length ? 'var(--blue)' : 'var(--bg-card)',
+          border: '1px solid var(--border)', borderRadius: 'var(--r-sm)',
+          color: value.length ? '#fff' : 'var(--text-1)', cursor: 'pointer',
+          maxWidth: 200, position: 'relative', textAlign: 'left',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >
+        {summary}
+        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 200,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 'var(--r-sm)', padding: '4px 0',
+          maxHeight: 260, overflowY: 'auto', minWidth: 220,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+        }}>
+          {value.length > 0 && (
+            <div
+              onClick={() => onChange([])}
+              style={{ padding: '6px 12px', fontSize: 11, color: 'var(--text-3)', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+            >
+              ✕ Clear all
+            </div>
+          )}
+          {options.map(opt => (
+            <label
+              key={opt}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 12px', cursor: 'pointer', fontSize: 12,
+                background: value.includes(opt) ? 'var(--bg-surface)' : 'transparent',
+              }}
+            >
+              <input type="checkbox" checked={value.includes(opt)} onChange={() => toggle(opt)} style={{ cursor: 'pointer', accentColor: 'var(--blue)' }} />
+              {opt}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function JapanStocks({ onSelectStock }) {
@@ -196,7 +261,7 @@ export default function JapanStocks({ onSelectStock }) {
   const [search, setSearch]       = useState(() => ss('jp_search', ''))
   const [searchInput, setSearchInput] = useState(() => ss('jp_search', ''))
   const [filterMarket, setFilterMarket] = useState(() => ss('jp_market', ''))
-  const [filterSector, setFilterSector] = useState(() => ss('jp_sector', ''))
+  const [filterSector, setFilterSector] = useState(() => ss('jp_sector', []))
   const [filterOptions, setFilterOptions] = useState({ markets: [], sectors: [] })
   const [loading, setLoading]     = useState(false)
 
@@ -409,7 +474,7 @@ export default function JapanStocks({ onSelectStock }) {
           options={filterOptions.markets}
           allLabel={t('jp_filter_all')}
         />
-        <FilterSelect
+        <MultiSelect
           label={t('jp_filter_sector')}
           value={filterSector}
           onChange={v => handleFilterChange('sector', v)}

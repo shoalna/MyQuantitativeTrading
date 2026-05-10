@@ -672,7 +672,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     and Wikipedia summary.
     """
     today = date.today()
-    ninety_days_ago = today - timedelta(days=90)
+    one_year_ago = today - timedelta(days=365)
 
     async with pool.acquire() as conn:
         listing = await conn.fetchrow(
@@ -686,7 +686,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         price_rows = await conn.fetch(
             """SELECT date, open, high, low, close, volume
                FROM jp_daily_prices WHERE code = $1 AND date >= $2 ORDER BY date""",
-            code, ninety_days_ago,
+            code, one_year_ago,
         )
 
     # API fallback when daily data is absent or too sparse (refresh_prices stores
@@ -696,7 +696,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         try:
             raw = await client.get_daily_quotes(
                 code=code,
-                from_date=_to_yyyymmdd(ninety_days_ago),
+                from_date=_to_yyyymmdd(one_year_ago),
                 to_date=_to_yyyymmdd(today),
             )
             quotes = sorted((_normalize_quote(r) for r in raw), key=lambda x: x["date"])
@@ -705,7 +705,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
                 price_rows = await conn.fetch(
                     "SELECT date, open, high, low, close, volume FROM jp_daily_prices "
                     "WHERE code = $1 AND date >= $2 ORDER BY date",
-                    code, ninety_days_ago,
+                    code, one_year_ago,
                 )
         except Exception as exc:
             logger.warning(f"Price fetch failed for {code}: {exc}")
