@@ -143,6 +143,11 @@ ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS change_months  SMALLINT;
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS aqr_score      NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS aqr_mom        NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS aqr_vol        NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom    NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_rsi2     NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_bb       NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair     NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_cs_mom   NUMERIC(5,1);
 """
 
 

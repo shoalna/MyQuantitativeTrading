@@ -107,6 +107,115 @@ function NoContent({ label }) {
   )
 }
 
+// ── Strategy score table ──────────────────────────────────────────────────────
+
+function scoreColor(v, invert = false) {
+  if (v == null) return 'var(--text-3)'
+  if (invert) return v <= 15 ? 'var(--green)' : v >= 85 ? 'var(--red)' : 'var(--text-1)'
+  return v >= 70 ? 'var(--green)' : v <= 30 ? 'var(--red)' : 'var(--text-1)'
+}
+
+function ScoreBar({ value }) {
+  if (value == null) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>—</span>
+  const pct = Math.max(0, Math.min(100, value))
+  const color = pct >= 70 ? 'var(--green)' : pct <= 30 ? 'var(--red)' : 'var(--blue)'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ flex: 1, height: 6, background: 'var(--bg-surface)', borderRadius: 3, border: '1px solid var(--border)', minWidth: 60 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.3s' }} />
+      </div>
+      <span style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 600, color, minWidth: 34, textAlign: 'right' }}>
+        {value.toFixed(1)}
+      </span>
+    </div>
+  )
+}
+
+function StrategySignal({ stratKey, score, t }) {
+  if (score == null) return <span style={{ color: 'var(--text-3)', fontSize: 12 }}>{t('strat_na')}</span>
+  let label, color
+  if (stratKey === 'tsmom') {
+    label = score > 50 ? t('strat_tsmom_long') : score < 50 ? t('strat_tsmom_short') : t('strat_tsmom_neutral')
+    color = score > 50 ? 'var(--green)' : score < 50 ? 'var(--red)' : 'var(--text-2)'
+  } else if (stratKey === 'rsi2') {
+    label = score < 15 ? t('strat_rsi2_buy') : score > 85 ? t('strat_rsi2_sell') : t('strat_rsi2_neutral')
+    color = score < 15 ? 'var(--green)' : score > 85 ? 'var(--red)' : 'var(--text-2)'
+  } else if (stratKey === 'bb') {
+    label = score >= 75 ? t('strat_bb_squeeze') : t('strat_bb_normal')
+    color = score >= 75 ? 'var(--amber)' : 'var(--text-2)'
+  } else if (stratKey === 'pair') {
+    label = score > 70 ? t('strat_pair_out') : score < 30 ? t('strat_pair_under') : t('strat_pair_neutral')
+    color = score > 70 ? 'var(--green)' : score < 30 ? 'var(--red)' : 'var(--text-2)'
+  } else {
+    label = score > 70 ? t('strat_cs_mom_top') : score < 30 ? t('strat_cs_mom_bottom') : t('strat_cs_mom_mid')
+    color = score > 70 ? 'var(--green)' : score < 30 ? 'var(--red)' : 'var(--text-2)'
+  }
+  return <span style={{ color, fontSize: 12, fontWeight: 500 }}>{label}</span>
+}
+
+const STRATEGIES = [
+  { key: 'tsmom',  nameKey: 'strat_tsmom',  typeKey: 'strat_tsmom_type',  holdKey: 'strat_tsmom_hold',  marketKey: 'strat_tsmom_market',  riskKey: 'strat_tsmom_risk'  },
+  { key: 'rsi2',   nameKey: 'strat_rsi2',   typeKey: 'strat_rsi2_type',   holdKey: 'strat_rsi2_hold',   marketKey: 'strat_rsi2_market',   riskKey: 'strat_rsi2_risk'   },
+  { key: 'bb',     nameKey: 'strat_bb',     typeKey: 'strat_bb_type',     holdKey: 'strat_bb_hold',     marketKey: 'strat_bb_market',     riskKey: 'strat_bb_risk'     },
+  { key: 'pair',   nameKey: 'strat_pair',   typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+  { key: 'cs_mom', nameKey: 'strat_cs_mom', typeKey: 'strat_cs_mom_type', holdKey: 'strat_cs_mom_hold', marketKey: 'strat_cs_mom_market', riskKey: 'strat_cs_mom_risk' },
+]
+
+function StrategyTable({ scores, t }) {
+  const thStyle = {
+    padding: '8px 12px', fontSize: 11, fontWeight: 500,
+    color: 'var(--text-2)', textAlign: 'left', whiteSpace: 'nowrap',
+    borderBottom: '1px solid var(--border)', background: 'var(--bg-card)',
+  }
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr>
+            <th style={thStyle}>{'Strategy'}</th>
+            <th style={{ ...thStyle, width: 180 }}>{t('strat_col_score')}</th>
+            <th style={thStyle}>{t('strat_col_signal')}</th>
+            <th style={thStyle}>{t('strat_col_type')}</th>
+            <th style={thStyle}>{t('strat_col_hold')}</th>
+            <th style={thStyle}>{t('strat_col_market')}</th>
+            <th style={{ ...thStyle, color: 'var(--red)' }}>{t('strat_col_risk')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {STRATEGIES.map(({ key, nameKey, typeKey, holdKey, marketKey, riskKey }) => {
+            const score = scores?.[key] ?? null
+            return (
+              <tr key={key} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ padding: '10px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {t(nameKey)}
+                </td>
+                <td style={{ padding: '10px 12px', minWidth: 160 }}>
+                  <ScoreBar value={score} />
+                </td>
+                <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                  <StrategySignal stratKey={key} score={score} t={t} />
+                </td>
+                <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {t(typeKey)}
+                </td>
+                <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {t(holdKey)}
+                </td>
+                <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {t(marketKey)}
+                </td>
+                <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--red)' }}>
+                  {t(riskKey)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Main detail component ─────────────────────────────────────────────────────
 
 const PERIODS = [
@@ -276,6 +385,11 @@ export default function JapanStockDetail({ code, onBack }) {
             ? <CandlestickChart data={filtered} />
             : <NoContent label={t('jp_detail_no_content')} />
         })()}
+      </Section>
+
+      {/* ── Strategy scores ── */}
+      <Section icon="🎯" title={t('jp_detail_strategies')}>
+        <StrategyTable scores={detail.scores} t={t} />
       </Section>
 
       {/* ── Wikipedia ── */}

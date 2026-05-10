@@ -52,6 +52,11 @@ _SORT_MAP = {
     "aqr_score":          "s.aqr_score",
     "aqr_mom":            "s.aqr_mom",
     "aqr_vol":            "s.aqr_vol",
+    "score_tsmom":        "s.score_tsmom",
+    "score_rsi2":         "s.score_rsi2",
+    "score_bb":           "s.score_bb",
+    "score_pair":         "s.score_pair",
+    "score_cs_mom":       "s.score_cs_mom",
 }
 
 
@@ -281,6 +286,7 @@ async def list_stocks(
             SELECT l.code, l.name, l.name_en, l.sector, l.market,
                    s.current_price, s.change_6m, s.abs_change_6m,
                    s.change_months, s.aqr_score, s.aqr_mom, s.aqr_vol,
+                   s.score_tsmom, s.score_rsi2, s.score_bb, s.score_pair, s.score_cs_mom,
                    s.updated_at AS price_updated_at
             FROM jp_listings l
             LEFT JOIN jp_stock_summary s ON l.code = s.code

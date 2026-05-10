@@ -449,7 +449,11 @@ export default function JapanStocks({ onSelectStock }) {
     { col: 'current_price',   label: t('jp_col_price'),      width: '100px', right: true },
     { col: 'change_6m',       label: t('jp_col_change'),     width: '110px', right: true },
     { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '110px', right: true },
-    { col: 'aqr_score',       label: t('jp_col_aqr'),        width: '90px',  right: true },
+    { col: 'score_tsmom',     label: t('jp_col_tsmom'),      width: '70px',  right: true },
+    { col: 'score_rsi2',      label: t('jp_col_rsi2'),       width: '68px',  right: true },
+    { col: 'score_bb',        label: t('jp_col_bb'),         width: '60px',  right: true },
+    { col: 'score_pair',      label: t('jp_col_pair'),       width: '60px',  right: true },
+    { col: 'score_cs_mom',    label: t('jp_col_cs_mom'),     width: '72px',  right: true },
     { col: 'price_updated_at',label: t('jp_col_updated'),    width: '120px' },
   ]
 
@@ -457,7 +461,11 @@ export default function JapanStocks({ onSelectStock }) {
     { col: 'name',            label: t('jp_col_name'),       width: 'auto',  sticky: true },
     { col: 'current_price',   label: t('jp_col_price'),      width: '80px',  right: true },
     { col: 'abs_change_6m',   label: t('jp_col_abs_change'), width: '80px',  right: true },
-    { col: 'aqr_score',       label: t('jp_col_aqr'),        width: '70px',  right: true },
+    { col: 'score_tsmom',     label: t('jp_col_tsmom'),      width: '62px',  right: true },
+    { col: 'score_rsi2',      label: t('jp_col_rsi2'),       width: '62px',  right: true },
+    { col: 'score_bb',        label: t('jp_col_bb'),         width: '54px',  right: true },
+    { col: 'score_pair',      label: t('jp_col_pair'),       width: '54px',  right: true },
+    { col: 'score_cs_mom',    label: t('jp_col_cs_mom'),     width: '66px',  right: true },
     { col: 'price_updated_at',label: t('jp_col_updated'),    width: '80px' },
   ]
 
@@ -601,8 +609,20 @@ export default function JapanStocks({ onSelectStock }) {
                 const absChangeColor = absChange == null ? 'var(--text-3)' : absChange >= 0 ? 'var(--green)' : 'var(--red)'
                 const chart = chartData[stock.code]
 
-                const aqrScore = stock.aqr_score
-                const aqrColor = aqrScore == null ? 'var(--text-3)' : aqrScore >= 70 ? 'var(--green)' : aqrScore <= 30 ? 'var(--red)' : 'var(--text-1)'
+                // strategy score helpers
+                const scoreColor = (v, invert = false) =>
+                  v == null ? 'var(--text-3)'
+                  : invert
+                    ? (v <= 15 ? 'var(--green)' : v >= 85 ? 'var(--red)' : 'var(--text-1)')
+                    : (v >= 70 ? 'var(--green)' : v <= 30 ? 'var(--red)' : 'var(--text-1)')
+                const bbColor = (v) =>
+                  v == null ? 'var(--text-3)' : v >= 75 ? 'var(--amber)' : 'var(--text-1)'
+                const scoreCell = (v, invert = false, colorFn = null) => {
+                  const c = colorFn ? colorFn(v) : scoreColor(v, invert)
+                  return v != null
+                    ? <span style={{ color: c, fontWeight: 600 }}>{Number(v).toFixed(1)}</span>
+                    : <span style={{ color: 'var(--text-3)' }}>—</span>
+                }
 
                 return (
                   <tr
@@ -669,12 +689,12 @@ export default function JapanStocks({ onSelectStock }) {
                       ) : <span style={{ color: 'var(--text-3)' }}>—</span>}
                     </td>
 
-                    {/* AQR Score */}
-                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
-                      {aqrScore != null
-                        ? <span style={{ color: aqrColor, fontWeight: 600 }}>{Number(aqrScore).toFixed(1)}</span>
-                        : <span style={{ color: 'var(--text-3)' }}>—</span>}
-                    </td>
+                    {/* Strategy scores */}
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_tsmom)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_rsi2, true)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_bb, false, bbColor)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_pair)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_cs_mom)}</td>
 
                     {/* Updated */}
                     <td style={{ padding: '8px 12px' }}>

@@ -465,19 +465,138 @@ async def refresh_prices(
 
 async def compute_aqr_scores(pool) -> int:
     """
-    Cross-sectional AQR-style factor scores for all stocks in jp_stock_summary.
-    Momentum  (60%): PERCENT_RANK of change_6m (higher MoM return = better).
-    Low-Vol   (40%): PERCENT_RANK of inverse monthly-return std dev (less volatile = better).
-    Updates aqr_score, aqr_mom, aqr_vol in jp_stock_summary.
+    Compute all 5 strategy scores for every stock (guide_search.md §7):
+
+    1. TSMOM   (score_tsmom):  Percentile rank of 6-month return. >50=long, <50=short.
+    2. RSI(2)  (score_rsi2):   2-period RSI from recent closes. <15=oversold, >85=overbought.
+    3. BB Squeeze (score_bb):  Band-width compression 0–100. 100=maximum squeeze.
+    4. Pair    (score_pair):   Sector deviation z-score → 0–100. >50=outperforming sector.
+    5. CS Mom  (score_cs_mom): Percentile rank of 3-month return (skip last 1m). >50=top.
+
+    Also recomputes legacy aqr_score / aqr_mom / aqr_vol for the AQR filter UI.
     """
     async with pool.acquire() as conn:
-        mom_rows = await conn.fetch("""
+        # 1. TSMOM — percentile rank of 6m mean-monthly return
+        tsmom_rows = await conn.fetch("""
             SELECT code,
-                   PERCENT_RANK() OVER (ORDER BY change_6m NULLS FIRST) * 100 AS mom_pct
-            FROM jp_stock_summary
-            WHERE change_6m IS NOT NULL
+                   ROUND(PERCENT_RANK() OVER (ORDER BY change_6m NULLS FIRST) * 100, 1) AS score
+            FROM jp_stock_summary WHERE change_6m IS NOT NULL
         """)
 
+        # 2. RSI(2) — from whatever daily closes we have in the last 90 days
+        #    (month-end snapshots give ~2–3 points; viewed stocks have full daily data)
+        rsi2_rows = await conn.fetch("""
+            WITH diffs AS (
+                SELECT code,
+                       close - LAG(close) OVER (PARTITION BY code ORDER BY date) AS diff
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '90 days' AND close IS NOT NULL
+            ),
+            agg AS (
+                SELECT code,
+                       AVG(CASE WHEN diff > 0 THEN diff ELSE 0   END) AS avg_gain,
+                       AVG(CASE WHEN diff < 0 THEN ABS(diff) ELSE 0 END) AS avg_loss
+                FROM diffs WHERE diff IS NOT NULL
+                GROUP BY code HAVING COUNT(*) >= 2
+            )
+            SELECT code,
+                   ROUND(
+                       CASE WHEN avg_loss = 0 THEN 100.0
+                            WHEN avg_gain = 0 THEN   0.0
+                            ELSE 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+                       END, 1) AS rsi2
+            FROM agg
+        """)
+
+        # 3. BB Squeeze intensity — requires 15+ consecutive daily prices
+        bb_rows = await conn.fetch("""
+            WITH bb AS (
+                SELECT code, date,
+                       AVG(close) OVER w    AS sma20,
+                       STDDEV(close) OVER w AS std20,
+                       COUNT(close) OVER w  AS cnt
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '200 days' AND close IS NOT NULL
+                WINDOW w AS (PARTITION BY code ORDER BY date ROWS 19 PRECEDING)
+            ),
+            bw AS (
+                SELECT code, date,
+                       CASE WHEN sma20 > 0 AND cnt >= 15
+                            THEN 4.0 * std20 / sma20 * 100
+                            ELSE NULL END AS bandwidth
+                FROM bb
+            ),
+            hist AS (
+                SELECT code, date, bandwidth,
+                       MIN(bandwidth) OVER (PARTITION BY code ORDER BY date
+                                            ROWS 119 PRECEDING) AS min_bw,
+                       MAX(bandwidth) OVER (PARTITION BY code ORDER BY date
+                                            ROWS 119 PRECEDING) AS max_bw,
+                       ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
+                FROM bw WHERE bandwidth IS NOT NULL
+            )
+            SELECT code,
+                   ROUND(CASE WHEN max_bw > min_bw
+                              THEN (1.0 - (bandwidth - min_bw) / (max_bw - min_bw)) * 100
+                              ELSE 50.0 END, 1) AS bb_score
+            FROM hist WHERE rn = 1
+        """)
+
+        # 4. Pair trade proxy — sector deviation z-score mapped to 0–100
+        pair_rows = await conn.fetch("""
+            WITH stats AS (
+                SELECT l.sector,
+                       AVG(s.change_6m)               AS mean,
+                       NULLIF(STDDEV(s.change_6m), 0) AS std
+                FROM jp_stock_summary s
+                JOIN jp_listings l ON l.code = s.code
+                WHERE s.change_6m IS NOT NULL
+                  AND l.sector NOT IN ('', 'その他')
+                GROUP BY l.sector HAVING COUNT(*) >= 5
+            )
+            SELECT s.code,
+                   ROUND(LEAST(100.0, GREATEST(0.0,
+                       ((s.change_6m - st.mean) / st.std + 3.0) / 6.0 * 100.0
+                   )), 1) AS score
+            FROM jp_stock_summary s
+            JOIN jp_listings l ON l.code = s.code
+            JOIN stats st ON st.sector = l.sector
+            WHERE s.change_6m IS NOT NULL
+        """)
+
+        # 5. CS Momentum — 3m return skipping the most recent month, percentile rank
+        cs_mom_rows = await conn.fetch("""
+            WITH monthly AS (
+                SELECT code,
+                       DATE_TRUNC('month', date) AS month,
+                       MAX(date)                 AS last_date
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '5 months' AND close IS NOT NULL
+                GROUP BY code, DATE_TRUNC('month', date)
+            ),
+            prices AS (
+                SELECT m.code, m.month, p.close
+                FROM monthly m
+                JOIN jp_daily_prices p ON p.code = m.code AND p.date = m.last_date
+            ),
+            ranked AS (
+                SELECT code, close,
+                       ROW_NUMBER() OVER (PARTITION BY code ORDER BY month DESC) AS mn
+                FROM prices
+            ),
+            ret3m AS (
+                SELECT b.code,
+                       (b.close - c.close) / NULLIF(c.close, 0) * 100 AS ret
+                FROM ranked b
+                JOIN ranked c ON c.code = b.code AND c.mn = 5
+                WHERE b.mn = 2 AND c.close > 0
+            )
+            SELECT code,
+                   ROUND(PERCENT_RANK() OVER (ORDER BY ret NULLS FIRST) * 100, 1) AS score
+            FROM ret3m WHERE ret IS NOT NULL
+        """)
+
+        # Legacy low-vol factor (kept for aqr_vol / aqr_score composite)
         vol_rows = await conn.fetch("""
             WITH monthly_extremes AS (
                 SELECT code,
@@ -504,43 +623,56 @@ async def compute_aqr_scores(pool) -> int:
                 SELECT code, STDDEV(monthly_ret) AS ret_stddev
                 FROM monthly_returns
                 WHERE monthly_ret IS NOT NULL
-                GROUP BY code
-                HAVING COUNT(monthly_ret) >= 2
+                GROUP BY code HAVING COUNT(monthly_ret) >= 2
             )
             SELECT code,
                    PERCENT_RANK() OVER (ORDER BY ret_stddev DESC NULLS LAST) * 100 AS vol_pct
             FROM vol_stats
         """)
 
-    mom_map = {r["code"]: float(r["mom_pct"]) for r in mom_rows}
-    vol_map = {r["code"]: float(r["vol_pct"]) for r in vol_rows}
+    tsmom_map  = {r["code"]: float(r["score"])    for r in tsmom_rows}
+    rsi2_map   = {r["code"]: float(r["rsi2"])     for r in rsi2_rows}
+    bb_map     = {r["code"]: float(r["bb_score"]) for r in bb_rows}
+    pair_map   = {r["code"]: float(r["score"])    for r in pair_rows}
+    cs_mom_map = {r["code"]: float(r["score"])    for r in cs_mom_rows}
+    vol_map    = {r["code"]: float(r["vol_pct"])  for r in vol_rows}
+
+    # Base: all codes that have at least a TSMOM or Pair score
+    all_codes = set(tsmom_map) | set(pair_map)
+    if not all_codes:
+        return 0
 
     records = []
-    for code, mom_pct in mom_map.items():
+    for code in all_codes:
+        mom_pct = tsmom_map.get(code)
         vol_pct = vol_map.get(code)
-        score = 0.6 * mom_pct + 0.4 * vol_pct if vol_pct is not None else mom_pct
+        aqr = 0.6 * mom_pct + 0.4 * vol_pct if mom_pct is not None and vol_pct is not None else mom_pct
         records.append((
-            round(score, 1),
-            round(mom_pct, 1),
+            round(aqr,     1) if aqr     is not None else None,
+            round(mom_pct, 1) if mom_pct is not None else None,
             round(vol_pct, 1) if vol_pct is not None else None,
+            tsmom_map.get(code),
+            rsi2_map.get(code),
+            bb_map.get(code),
+            pair_map.get(code),
+            cs_mom_map.get(code),
             code,
         ))
-
-    if not records:
-        return 0
 
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.executemany(
                 """
                 UPDATE jp_stock_summary
-                SET aqr_score = $1, aqr_mom = $2, aqr_vol = $3
-                WHERE code = $4
+                SET aqr_score   = $1, aqr_mom    = $2, aqr_vol    = $3,
+                    score_tsmom = $4, score_rsi2 = $5, score_bb   = $6,
+                    score_pair  = $7, score_cs_mom = $8
+                WHERE code = $9
                 """,
                 records,
             )
 
-    logger.info(f"Computed AQR scores for {len(records)} stocks")
+    logger.info(f"Computed strategy scores for {len(records)} stocks")
     return len(records)
 
 
@@ -679,7 +811,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             "SELECT code, name, name_en, sector, market FROM jp_listings WHERE code = $1", code
         )
         summary = await conn.fetchrow(
-            """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at
+            """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at,
+                      score_tsmom, score_rsi2, score_bb, score_pair, score_cs_mom
                FROM jp_stock_summary WHERE code = $1""",
             code,
         )
@@ -741,4 +874,11 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         "daily_prices": daily_prices,
         "wikipedia":    wikipedia,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
+        "scores": {
+            "tsmom":  float(summary["score_tsmom"])   if summary and summary["score_tsmom"]   is not None else None,
+            "rsi2":   float(summary["score_rsi2"])    if summary and summary["score_rsi2"]    is not None else None,
+            "bb":     float(summary["score_bb"])      if summary and summary["score_bb"]      is not None else None,
+            "pair":   float(summary["score_pair"])    if summary and summary["score_pair"]    is not None else None,
+            "cs_mom": float(summary["score_cs_mom"])  if summary and summary["score_cs_mom"]  is not None else None,
+        } if summary else None,
     }
