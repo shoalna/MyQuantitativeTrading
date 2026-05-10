@@ -396,8 +396,17 @@ export default function JapanStockDetail({ code, onBack }) {
       <Section icon="📖" title={t('jp_detail_wiki')}>
         {detail.wikipedia?.found && detail.wikipedia.extract ? (
           <div>
+            {detail.wikipedia.lang && (
+              <span style={{
+                fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                color: 'var(--text-2)', marginBottom: 8, display: 'inline-block',
+              }}>
+                {detail.wikipedia.lang === 'en' ? 'English' : '日本語'}
+              </span>
+            )}
             <div style={{
-              maxHeight: 280, overflowY: 'auto',
+              maxHeight: 280, overflowY: 'auto', marginTop: 6,
               fontSize: 13, lineHeight: 1.75, color: 'var(--text-1)',
               background: 'var(--bg-surface)', padding: '12px 16px',
               borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
@@ -412,7 +421,7 @@ export default function JapanStockDetail({ code, onBack }) {
                 rel="noopener noreferrer"
                 style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8, display: 'inline-block' }}
               >
-                Wikipedia で全文を読む →
+                {t('jp_wiki_read_more')}
               </a>
             )}
           </div>

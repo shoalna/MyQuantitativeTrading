@@ -754,51 +754,76 @@ async def get_chart_data(pool, client: JQuantsClient, code: str) -> list[dict]:
 
 # ── Wikipedia & stock detail ───────────────────────────────────────────────────
 
-async def fetch_wikipedia_summary(company_name: str) -> dict:
-    """Search Japanese Wikipedia for the company and return intro extract."""
-    # Strip corporate suffixes that rarely appear in article titles
-    search_name = (
-        company_name
-        .replace("株式会社", "").replace("（株）", "").replace("(株)", "")
-        .replace("合同会社", "").strip()
+_EN_CORP_SUFFIXES = [
+    "Co., Ltd.", "Co.,Ltd.", "Co. Ltd.", "Holdings Co., Ltd.", "Holdings Co.",
+    "Holdings, Inc.", "Holdings", "Group Co., Ltd.", "Group Co.", "Group",
+    "Ltd.", "Inc.", "Corp.", "Corporation", "K.K.", "G.K.", "& Co.", "plc", "PLC",
+]
+
+def _clean_en_name(name: str) -> str:
+    for s in _EN_CORP_SUFFIXES:
+        name = name.replace(s, "")
+    return name.strip(" ,.")
+
+def _clean_ja_name(name: str) -> str:
+    return (
+        name.replace("株式会社", "").replace("（株）", "").replace("(株)", "")
+        .replace("合同会社", "").replace("有限会社", "").strip()
     )
+
+async def _wiki_fetch(http: httpx.AsyncClient, base_url: str, search_term: str) -> dict | None:
+    """Search one Wikipedia domain and return the intro extract, or None if not found."""
+    sr = await http.get(
+        f"{base_url}/w/api.php",
+        params={"action": "query", "list": "search", "srsearch": search_term,
+                "srlimit": 1, "format": "json", "utf8": 1},
+        headers={"User-Agent": "MyQuantitativeTrading/1.0 (research tool)"},
+    )
+    sr.raise_for_status()
+    results = sr.json().get("query", {}).get("search", [])
+    if not results:
+        return None
+    title = results[0]["title"]
+    er = await http.get(
+        f"{base_url}/w/api.php",
+        params={"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
+                "titles": title, "format": "json", "utf8": 1},
+        headers={"User-Agent": "MyQuantitativeTrading/1.0 (research tool)"},
+    )
+    er.raise_for_status()
+    pages = er.json().get("query", {}).get("pages", {})
+    extract = next(iter(pages.values()), {}).get("extract", "")
+    if not extract:
+        return None
+    lang = "en" if "en.wikipedia" in base_url else "ja"
+    return {
+        "found": True,
+        "title": title,
+        "extract": extract,
+        "url": f"{base_url}/wiki/{title.replace(' ', '_')}",
+        "lang": lang,
+    }
+
+async def fetch_wikipedia_summary(name_en: str, name_ja: str) -> dict:
+    """Try English Wikipedia first, fall back to Japanese Wikipedia."""
+    _not_found = {"found": False, "title": None, "extract": None, "url": None, "lang": None}
     try:
         async with httpx.AsyncClient(timeout=10) as http:
-            sr = await http.get(
-                "https://ja.wikipedia.org/w/api.php",
-                params={
-                    "action": "query", "list": "search",
-                    "srsearch": search_name, "srlimit": 1,
-                    "format": "json", "utf8": 1,
-                },
-            )
-            sr.raise_for_status()
-            results = sr.json().get("query", {}).get("search", [])
-            if not results:
-                return {"found": False, "title": None, "extract": None, "url": None}
-            title = results[0]["title"]
-
-            er = await http.get(
-                "https://ja.wikipedia.org/w/api.php",
-                params={
-                    "action": "query", "prop": "extracts",
-                    "exintro": 1, "explaintext": 1,
-                    "titles": title, "format": "json", "utf8": 1,
-                },
-            )
-            er.raise_for_status()
-            pages = er.json().get("query", {}).get("pages", {})
-            page = next(iter(pages.values()), {})
-            extract = page.get("extract", "")
-            return {
-                "found": bool(extract),
-                "title": title,
-                "extract": extract,
-                "url": f"https://ja.wikipedia.org/wiki/{title.replace(' ', '_')}",
-            }
+            if name_en:
+                cleaned = _clean_en_name(name_en)
+                if cleaned:
+                    result = await _wiki_fetch(http, "https://en.wikipedia.org", cleaned)
+                    if result:
+                        return result
+            if name_ja:
+                cleaned = _clean_ja_name(name_ja)
+                if cleaned:
+                    result = await _wiki_fetch(http, "https://ja.wikipedia.org", cleaned)
+                    if result:
+                        return result
     except Exception as exc:
-        logger.warning(f"Wikipedia fetch failed for '{company_name}': {exc}")
-        return {"found": False, "title": None, "extract": None, "url": None}
+        logger.warning(f"Wikipedia fetch failed for '{name_en}' / '{name_ja}': {exc}")
+    return _not_found
 
 
 async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> dict:
@@ -811,7 +836,10 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
 
     async with pool.acquire() as conn:
         listing = await conn.fetchrow(
-            "SELECT code, name, name_en, sector, market FROM jp_listings WHERE code = $1", code
+            """SELECT code, name, name_en, sector, market,
+                      wiki_title, wiki_summary, wiki_url, wiki_lang, wiki_fetched_at
+               FROM jp_listings WHERE code = $1""",
+            code,
         )
         summary = await conn.fetchrow(
             """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at,
@@ -858,7 +886,31 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         for r in price_rows
     ]
 
-    wikipedia = await fetch_wikipedia_summary(listing["name"]) if listing else {"found": False}
+    # Wikipedia: serve from DB cache (30-day TTL), fetch fresh if absent or stale
+    if listing:
+        fetched_at = listing["wiki_fetched_at"]
+        cache_age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
+        if cache_age is None or cache_age > 30:
+            wikipedia = await fetch_wikipedia_summary(listing["name_en"] or "", listing["name"])
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE jp_listings
+                       SET wiki_title=$1, wiki_summary=$2, wiki_url=$3, wiki_lang=$4,
+                           wiki_fetched_at=NOW()
+                       WHERE code=$5""",
+                    wikipedia.get("title"), wikipedia.get("extract"),
+                    wikipedia.get("url"), wikipedia.get("lang"), code,
+                )
+        else:
+            wikipedia = {
+                "found": bool(listing["wiki_summary"]),
+                "title": listing["wiki_title"],
+                "extract": listing["wiki_summary"],
+                "url": listing["wiki_url"],
+                "lang": listing["wiki_lang"],
+            }
+    else:
+        wikipedia = {"found": False, "title": None, "extract": None, "url": None, "lang": None}
 
     return {
         "code": code,

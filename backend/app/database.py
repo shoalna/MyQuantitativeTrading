@@ -148,6 +148,11 @@ ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_rsi2     NUMERIC(5,1
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_bb       NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair     NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_cs_mom   NUMERIC(5,1);
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_title      TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_summary    TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_url        TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_lang       TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_fetched_at TIMESTAMPTZ;
 """
 
 
