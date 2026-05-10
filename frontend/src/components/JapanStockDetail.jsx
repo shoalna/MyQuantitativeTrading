@@ -226,7 +226,7 @@ const PERIODS = [
 ]
 
 export default function JapanStockDetail({ code, onBack }) {
-  const { t } = useLang()
+  const { t, lang } = useLang()
   const [detail, setDetail]       = useState(null)
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
