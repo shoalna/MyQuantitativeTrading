@@ -1,7 +1,8 @@
 import logging
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+import pydantic
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query
 
 from app.config import settings
 from app.database import get_pool
@@ -414,8 +415,13 @@ async def fetch_company_info_endpoint(code: str):
     return result or {}
 
 
+class _YoutubeRequest(pydantic.BaseModel):
+    channels: list[str] = []
+    keywords: list[str] = []
+
+
 @router.post("/stocks/{code}/youtube")
-async def fetch_youtube_report_endpoint(code: str):
+async def fetch_youtube_report_endpoint(code: str, req: _YoutubeRequest = Body(default_factory=_YoutubeRequest)):
     """Trigger on-demand YouTube research report for one stock (7-day cache)."""
     from app.services.youtube_research import fetch_youtube_report
     import json
@@ -431,6 +437,7 @@ async def fetch_youtube_report_endpoint(code: str):
     result = await fetch_youtube_report(
         row["name"] or "", row["name_en"] or "", code.upper(),
         settings.anthropic_api_key, settings.youtube_api_key,
+        channels=req.channels, keywords=req.keywords,
     )
     if result and "error" not in result:
         async with pool.acquire() as conn:

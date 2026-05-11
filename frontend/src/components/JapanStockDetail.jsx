@@ -515,7 +515,12 @@ export default function JapanStockDetail({ code, onBack }) {
   const handleFetchYoutubeReport = async () => {
     setFetchingYt(true)
     try {
-      const { data } = await fetchJpYoutubeReport(code)
+      let channels = [], keywords = []
+      try {
+        channels = JSON.parse(localStorage.getItem('yt_channels') || '[]')
+        keywords = JSON.parse(localStorage.getItem('yt_keywords') || '[]')
+      } catch {}
+      const { data } = await fetchJpYoutubeReport(code, { channels, keywords })
       setYoutubeReport(data && !data.error ? data : data)
     } catch (e) {
       console.error('YouTube report fetch failed:', e)

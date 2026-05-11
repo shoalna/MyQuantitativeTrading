@@ -26,16 +26,23 @@ _MODEL = "claude-sonnet-4-6"
 
 # ── Query generation ───────────────────────────────────────────────────────────
 
-def _generate_queries(name: str, name_en: str) -> list[str]:
+def _generate_queries(
+    name: str,
+    name_en: str,
+    keywords: list[str] | None = None,
+    channels: list[str] | None = None,
+) -> list[str]:
     company = name_en or name
-    return [
-        f"{company} 決算 業績",
-        f"{company} stock analysis",
-        f"{name} 株価 評論",
-        f"{company} earnings results",
-        f"{name} 投資家 IR",
-        f"{company} news business",
-    ]
+    kws = keywords if keywords else ["決算 業績", "stock analysis", "株価 評論", "earnings results", "投資家 IR", "news business"]
+    queries = [f"{company} {kw}" for kw in kws[:6]]
+    if name and name != company and not keywords:
+        # replace two English-only defaults with Japanese company name variants
+        queries[2] = f"{name} 株価 評論"
+        queries[4] = f"{name} 投資家 IR"
+    if channels:
+        for ch in channels[:3]:
+            queries.append(f"{company} {ch}")
+    return queries[:10]
 
 
 # ── Video search ───────────────────────────────────────────────────────────────
@@ -225,6 +232,8 @@ async def fetch_youtube_report(
     code: str,
     anthropic_api_key: str,
     youtube_api_key: str = "",
+    channels: list[str] | None = None,
+    keywords: list[str] | None = None,
 ) -> Optional[dict]:
     """
     Search YouTube for company videos, fetch transcripts, analyze with Claude.
@@ -234,7 +243,7 @@ async def fetch_youtube_report(
         return None
 
     try:
-        queries = _generate_queries(name, name_en)
+        queries = _generate_queries(name, name_en, keywords=keywords, channels=channels)
 
         if youtube_api_key and not youtube_api_key.startswith("your_"):
             videos_map = await _search_youtube_api(queries, youtube_api_key)
