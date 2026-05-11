@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { getJpStocks, getJpStockChart, refreshJpListings, refreshJpPrices, getJpStatus, getJpFilters, computeJpAqr } from '../api/client'
 import { useLang } from '../context/LangContext'
+import { useFavorites } from '../hooks/useFavorites'
 
 // ── Mobile detection ──────────────────────────────────────────────────────────
 
-function useIsMobile() {
+export function useIsMobile() {
   const [mobile, setMobile] = useState(window.innerWidth < 768)
   useEffect(() => {
     const fn = () => setMobile(window.innerWidth < 768)
@@ -16,7 +17,7 @@ function useIsMobile() {
 
 // ── Sparkline SVG ─────────────────────────────────────────────────────────────
 
-function Sparkline({ data, width = 160, height = 38 }) {
+export function Sparkline({ data, width = 160, height = 38 }) {
   if (!data || data.length < 2) {
     return <div style={{ width, height, display: 'flex', alignItems: 'center', color: 'var(--text-3)', fontSize: 11 }}>—</div>
   }
@@ -111,7 +112,7 @@ function OpCard({ label, status, onStart, disabled, t }) {
 
 // ── Sortable column header ────────────────────────────────────────────────────
 
-function Th({ col, label, width, sortBy, onSort, right = false, sticky = false }) {
+export function Th({ col, label, width, sortBy, onSort, right = false, sticky = false }) {
   const active = sortBy.by === col
   return (
     <th
@@ -134,7 +135,7 @@ function Th({ col, label, width, sortBy, onSort, right = false, sticky = false }
 
 // ── Updated-at badge ──────────────────────────────────────────────────────────
 
-function UpdatedAt({ iso, noDataLabel }) {
+export function UpdatedAt({ iso, noDataLabel }) {
   if (!iso) {
     return (
       <span style={{
@@ -285,6 +286,7 @@ function MultiSelect({ label, value, onChange, options, allLabel }) {
 export default function JapanStocks({ onSelectStock }) {
   const { t } = useLang()
   const isMobile = useIsMobile()
+  const { favorites, toggle: toggleFav } = useFavorites()
 
   const [stocks, setStocks]       = useState([])
   const [total, setTotal]         = useState(0)
@@ -470,8 +472,8 @@ export default function JapanStocks({ onSelectStock }) {
   ]
 
   const COLS = isMobile ? COLS_MOBILE : COLS_DESKTOP
-  // +1 for chart col on desktop; AQR score is already counted in COLS_DESKTOP
-  const colSpan = COLS.length + (isMobile ? 0 : 1)
+  // +1 for star col; +1 for chart col on desktop
+  const colSpan = COLS.length + (isMobile ? 1 : 2)
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -586,6 +588,7 @@ export default function JapanStocks({ onSelectStock }) {
           <table className="jp-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: isMobile ? 12 : 13 }}>
             <thead>
               <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
+                <th style={{ padding: '10px 8px', width: 36, textAlign: 'center' }} />
                 {COLS.map(c => <Th key={c.col} {...c} sortBy={sortBy} onSort={handleSort} />)}
                 {!isMobile && (
                   <th style={{ padding: '10px 12px', textAlign: 'left', color: 'var(--text-2)', fontWeight: 400, fontSize: 12, width: '180px', whiteSpace: 'nowrap' }}>
@@ -630,6 +633,21 @@ export default function JapanStocks({ onSelectStock }) {
                     onClick={() => onSelectStock?.(stock.code)}
                     style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
                   >
+                    {/* Favorite star */}
+                    <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleFav(stock.code) }}
+                        title={favorites.has(stock.code) ? t('watchlist_fav_remove') : t('watchlist_fav_add')}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          fontSize: 16, lineHeight: 1, padding: 2,
+                          color: favorites.has(stock.code) ? 'var(--amber)' : 'var(--text-3)',
+                        }}
+                      >
+                        {favorites.has(stock.code) ? '★' : '☆'}
+                      </button>
+                    </td>
+
                     {/* Code — desktop only */}
                     {!isMobile && (
                       <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12, color: 'var(--blue)', whiteSpace: 'nowrap' }}>

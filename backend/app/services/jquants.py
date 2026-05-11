@@ -1022,7 +1022,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     async with pool.acquire() as conn:
         listing = await conn.fetchrow(
             """SELECT code, name, name_en, sector, market,
-                      company_info, company_info_fetched_at
+                      company_info, company_info_fetched_at,
+                      youtube_report, youtube_fetched_at
                FROM jp_listings WHERE code = $1""",
             code,
         )
@@ -1071,12 +1072,15 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         for r in price_rows
     ]
 
-    # Company info: return from DB cache only — fetch is triggered on demand via POST endpoint
+    # Company info and YouTube report: served from DB cache only.
+    # Fetch is triggered on demand via their respective POST endpoints.
     company_info = None
-    if listing:
-        raw = listing["company_info"]
-        if raw:
-            company_info = json.loads(raw)
+    if listing and listing["company_info"]:
+        company_info = json.loads(listing["company_info"])
+
+    youtube_report = None
+    if listing and listing["youtube_report"]:
+        youtube_report = json.loads(listing["youtube_report"])
 
     quarterly_fins = None
     try:
@@ -1101,6 +1105,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         "daily_prices":    daily_prices,
         "company_info":    company_info,
         "quarterly_fins":  quarterly_fins,
+        "youtube_report":  youtube_report,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
         "scores": {
             "tsmom":  float(summary["score_tsmom"])   if summary and summary["score_tsmom"]   is not None else None,

@@ -158,6 +158,8 @@ ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_data             TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_fetched_at       TIMESTAMPTZ;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info          TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info_fetched_at TIMESTAMPTZ;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_report         TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_fetched_at     TIMESTAMPTZ;
 """
 
 

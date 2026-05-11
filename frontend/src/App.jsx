@@ -1,59 +1,41 @@
 import { useState } from 'react'
 import Nav from './components/Nav'
-import CompanyList from './components/CompanyList'
-import CompanyDetail from './components/CompanyDetail'
 import ConfigPage from './components/ConfigPage'
 import JapanStocks from './components/JapanStocks'
+import JapanWatchlist from './components/JapanWatchlist'
 import JapanStockDetail from './components/JapanStockDetail'
 
 export default function App() {
   const [page, setPage] = useState('japan')
-  const [selectedSymbol, setSelectedSymbol] = useState(null)
   const [selectedJpCode, setSelectedJpCode] = useState(null)
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [jpDetailFrom, setJpDetailFrom] = useState('japan')
 
-  const handleSelectCompany = (symbol) => {
-    setSelectedSymbol(symbol)
-    setPage('detail')
-  }
-
-  const handleBack = () => {
-    setSelectedSymbol(null)
-    setPage('home')
-  }
-
-  const handleSelectJpStock = (code) => {
+  const handleSelectJpStock = (code, from = 'japan') => {
     setSelectedJpCode(code)
+    setJpDetailFrom(from)
     setPage('japanDetail')
   }
 
   const handleJpBack = () => {
     setSelectedJpCode(null)
-    setPage('japan')
+    setPage(jpDetailFrom)
   }
 
   const handleNav = (p) => {
     setPage(p)
-    setSelectedSymbol(null)
     setSelectedJpCode(null)
   }
 
   return (
     <>
       <Nav
-        page={page === 'detail' ? 'home' : page === 'japanDetail' ? 'japan' : page}
+        page={page === 'japanDetail' ? jpDetailFrom : page}
         onNav={handleNav}
-        onJobDone={() => {
-          setPage('home')
-          setRefreshTrigger((n) => n + 1)
-        }}
+        onJobDone={() => setPage('home')}
       />
-      {page === 'home' && <CompanyList onSelect={handleSelectCompany} />}
-      {page === 'detail' && selectedSymbol && (
-        <CompanyDetail symbol={selectedSymbol} onBack={handleBack} />
-      )}
+      {page === 'home' && <JapanWatchlist onSelectStock={(code) => handleSelectJpStock(code, 'home')} />}
       {page === 'config' && <ConfigPage />}
-      {page === 'japan' && <JapanStocks onSelectStock={handleSelectJpStock} />}
+      {page === 'japan' && <JapanStocks onSelectStock={(code) => handleSelectJpStock(code, 'japan')} />}
       {page === 'japanDetail' && selectedJpCode && (
         <JapanStockDetail code={selectedJpCode} onBack={handleJpBack} />
       )}

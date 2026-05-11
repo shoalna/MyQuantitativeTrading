@@ -142,41 +142,50 @@ def _build_where(
     search: str,
     market: str,
     sectors: list[str],
+    codes: list[str] | None = None,
     aqr_min: float | None = None,
     aqr_max: float | None = None,
 ):
     """Return (where_clause, params_list, next_param_index)."""
-    # Always exclude markets that carry no meaningful trading data
-    conditions: list[str] = ["l.market NOT IN ('その他')"]
     params: list = []
     p = 0
 
-    if search:
-        like = f"%{search}%"
-        params.append(like)
-        p += 1
-        conditions.append(f"(l.code ILIKE ${p} OR l.name ILIKE ${p} OR l.name_en ILIKE ${p})")
+    if codes:
+        # Watchlist mode: return exactly the requested codes, no market exclusion
+        placeholders = ", ".join(f"${p + i + 1}" for i in range(len(codes)))
+        params.extend(codes)
+        p += len(codes)
+        conditions: list[str] = [f"l.code IN ({placeholders})"]
+    else:
+        # Browse mode: exclude noisy markets and apply filters
+        conditions = ["l.market NOT IN ('その他')"]
 
-    if market:
-        params.append(market)
-        p += 1
-        conditions.append(f"l.market = ${p}")
+        if search:
+            like = f"%{search}%"
+            params.append(like)
+            p += 1
+            conditions.append(f"(l.code ILIKE ${p} OR l.name ILIKE ${p} OR l.name_en ILIKE ${p})")
 
-    if sectors:
-        placeholders = ", ".join(f"${p + i + 1}" for i in range(len(sectors)))
-        params.extend(sectors)
-        p += len(sectors)
-        conditions.append(f"l.sector IN ({placeholders})")
+        if market:
+            params.append(market)
+            p += 1
+            conditions.append(f"l.market = ${p}")
 
-    if aqr_min is not None:
-        params.append(aqr_min)
-        p += 1
-        conditions.append(f"s.aqr_score >= ${p}")
+        if sectors:
+            placeholders = ", ".join(f"${p + i + 1}" for i in range(len(sectors)))
+            params.extend(sectors)
+            p += len(sectors)
+            conditions.append(f"l.sector IN ({placeholders})")
 
-    if aqr_max is not None:
-        params.append(aqr_max)
-        p += 1
-        conditions.append(f"s.aqr_score <= ${p}")
+        if aqr_min is not None:
+            params.append(aqr_min)
+            p += 1
+            conditions.append(f"s.aqr_score >= ${p}")
+
+        if aqr_max is not None:
+            params.append(aqr_max)
+            p += 1
+            conditions.append(f"s.aqr_score <= ${p}")
 
     where = f"WHERE {' AND '.join(conditions)}"
     return where, params, p
@@ -260,12 +269,13 @@ async def get_filters():
 @router.get("/stocks")
 async def list_stocks(
     page:     int = Query(1, ge=1),
-    limit:    int = Query(50, ge=1, le=200),
+    limit:    int = Query(50, ge=1, le=500),
     sort_by:  str = Query("code"),
     sort_dir: str = Query("asc"),
     search:   str = Query(""),
     market:   str = Query(""),
     sector:   list[str] = Query(default=[]),
+    code:     list[str] = Query(default=[]),
     aqr_min:  float | None = Query(default=None),
     aqr_max:  float | None = Query(default=None),
 ):
@@ -274,7 +284,7 @@ async def list_stocks(
     order    = "DESC" if sort_dir.lower() == "desc" else "ASC"
     offset   = (page - 1) * limit
 
-    where_clause, base_params, base_p = _build_where(search, market, sector, aqr_min, aqr_max)
+    where_clause, base_params, base_p = _build_where(search, market, sector, code or None, aqr_min, aqr_max)
 
     async with pool.acquire() as conn:
         total = await conn.fetchval(
@@ -399,6 +409,33 @@ async def fetch_company_info_endpoint(code: str):
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE jp_listings SET company_info=$1, company_info_fetched_at=NOW() WHERE code=$2",
+                json.dumps(result), code.upper(),
+            )
+    return result or {}
+
+
+@router.post("/stocks/{code}/youtube")
+async def fetch_youtube_report_endpoint(code: str):
+    """Trigger on-demand YouTube research report for one stock (7-day cache)."""
+    from app.services.youtube_research import fetch_youtube_report
+    import json
+    if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT name, name_en, youtube_fetched_at FROM jp_listings WHERE code=$1", code.upper()
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    result = await fetch_youtube_report(
+        row["name"] or "", row["name_en"] or "", code.upper(),
+        settings.anthropic_api_key, settings.youtube_api_key,
+    )
+    if result and "error" not in result:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jp_listings SET youtube_report=$1, youtube_fetched_at=NOW() WHERE code=$2",
                 json.dumps(result), code.upper(),
             )
     return result or {}

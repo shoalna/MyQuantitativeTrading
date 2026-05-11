@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo } from '../api/client'
+import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport } from '../api/client'
 import { useLang } from '../context/LangContext'
 
 // ── Candlestick chart ─────────────────────────────────────────────────────────
@@ -476,6 +476,8 @@ export default function JapanStockDetail({ code, onBack }) {
   const [period, setPeriod]         = useState(90)
   const [companyInfo, setCompanyInfo] = useState(undefined)
   const [fetchingInfo, setFetchingInfo] = useState(false)
+  const [youtubeReport, setYoutubeReport] = useState(undefined)
+  const [fetchingYt, setFetchingYt] = useState(false)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -503,7 +505,24 @@ export default function JapanStockDetail({ code, onBack }) {
   }
 
   useEffect(() => { fetchDetail() }, [fetchDetail])
-  useEffect(() => { if (detail) setCompanyInfo(detail.company_info ?? null) }, [detail])
+  useEffect(() => {
+    if (detail) {
+      setCompanyInfo(detail.company_info ?? null)
+      setYoutubeReport(detail.youtube_report ?? null)
+    }
+  }, [detail])
+
+  const handleFetchYoutubeReport = async () => {
+    setFetchingYt(true)
+    try {
+      const { data } = await fetchJpYoutubeReport(code)
+      setYoutubeReport(data && !data.error ? data : data)
+    } catch (e) {
+      console.error('YouTube report fetch failed:', e)
+    } finally {
+      setFetchingYt(false)
+    }
+  }
 
   const handleFetchCompanyInfo = async () => {
     setFetchingInfo(true)
@@ -775,14 +794,129 @@ export default function JapanStockDetail({ code, onBack }) {
 
       {/* ── Placeholder sections ── */}
       {[
-        { icon: '📰', key: 'jp_detail_news'    },
-        { icon: '▶',  key: 'jp_detail_youtube' },
-        { icon: '💬', key: 'jp_detail_sns'     },
+        { icon: '📰', key: 'jp_detail_news' },
+        { icon: '💬', key: 'jp_detail_sns'  },
       ].map(({ icon, key }) => (
         <Section key={key} icon={icon} title={t(key)}>
           <NoContent label={t('jp_detail_no_content')} />
         </Section>
       ))}
+
+      {/* ── YouTube Analysis ── */}
+      <Section icon="▶" title={t('jp_detail_youtube')}>
+        {(() => {
+          const yt = youtubeReport || {}
+          const pick = (obj) => obj
+            ? (lang === 'ja' ? obj.ja : lang === 'zh' ? obj.zh : null) || obj.en || obj.ja || obj.zh || ''
+            : ''
+
+          const catColor = { financial: 'var(--blue)', stock: '#8b5cf6', review: '#f59e0b', pr: '#14b8a6', other: 'var(--text-3)' }
+          const sentColor = { positive: 'var(--green)', neutral: 'var(--text-3)', negative: 'var(--red)' }
+          const catKey = { financial: 'yt_cat_financial', review: 'yt_cat_review', stock: 'yt_cat_stock', pr: 'yt_cat_pr', other: 'yt_cat_other' }
+          const sentKey = { positive: 'yt_sent_positive', neutral: 'yt_sent_neutral', negative: 'yt_sent_negative' }
+
+          if (yt.error === 'no_credits') return <NoContent label={t('yt_no_credits')} />
+          if (yt.error === 'no_videos') return (
+            <div>
+              <NoContent label={t('yt_no_videos')} />
+              <div style={{ textAlign: 'center', marginTop: 10 }}>
+                <button onClick={handleFetchYoutubeReport} disabled={fetchingYt}
+                  style={{ fontSize: 11, padding: '3px 12px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {fetchingYt ? t('yt_generating') : t('yt_regenerate')}
+                </button>
+              </div>
+            </div>
+          )
+
+          if (!yt.executive_summary) return (
+            <div style={{ textAlign: 'center', padding: '20px 16px' }}>
+              <div style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 12 }}>{t('yt_generate_prompt')}</div>
+              <button onClick={handleFetchYoutubeReport} disabled={fetchingYt}
+                style={{ background: 'var(--blue)', color: '#fff', border: 'none', padding: '8px 20px', fontSize: 13, borderRadius: 'var(--r-sm)', opacity: fetchingYt ? 0.7 : 1 }}>
+                {fetchingYt ? t('yt_generating') : t('yt_generate')}
+              </button>
+            </div>
+          )
+
+          const videos = yt.videos || []
+          return (
+            <div>
+              {/* Header meta */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  {yt.videos_analyzed} {t('yt_videos_analyzed')}
+                  {yt.generated_at ? ` · ${new Date(yt.generated_at).toLocaleDateString()}` : ''}
+                </span>
+                {yt.overall_sentiment && (
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: sentColor[yt.overall_sentiment] + '22', color: sentColor[yt.overall_sentiment] }}>
+                    {t(sentKey[yt.overall_sentiment] || 'yt_sent_neutral')}
+                    {yt.sentiment_score != null ? ` ${(yt.sentiment_score * 100).toFixed(0)}%` : ''}
+                  </span>
+                )}
+                <button onClick={handleFetchYoutubeReport} disabled={fetchingYt}
+                  style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {fetchingYt ? t('yt_generating') : t('yt_regenerate')}
+                </button>
+              </div>
+
+              {/* Executive Summary */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>{t('yt_exec_summary')}</div>
+                <div style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)', background: 'var(--bg-surface)', padding: '10px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
+                  {pick(yt.executive_summary)}
+                </div>
+              </div>
+
+              {/* Key Findings */}
+              {(yt.key_findings || []).length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-2)', marginBottom: 6 }}>{t('yt_key_findings')}</div>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)' }}>
+                    {yt.key_findings.map((f, i) => <li key={i}>{pick(f)}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {/* Video cards */}
+              {videos.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {videos.map((v, i) => (
+                    <div key={v.video_id || i} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                        <a href={v.url} target="_blank" rel="noopener noreferrer"
+                          style={{ fontSize: 13, fontWeight: 600, color: 'var(--blue)', textDecoration: 'none', flex: 1 }}>
+                          {v.title}
+                        </a>
+                        {v.category && (
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 99, background: (catColor[v.category] || 'var(--text-3)') + '22', color: catColor[v.category] || 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                            {t(catKey[v.category] || 'yt_cat_other')}
+                          </span>
+                        )}
+                        {v.sentiment && (
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 99, background: (sentColor[v.sentiment] || 'var(--text-3)') + '22', color: sentColor[v.sentiment] || 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                            {t(sentKey[v.sentiment] || 'yt_sent_neutral')}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 6 }}>
+                        {[v.channel, v.published_at, v.transcript_source === 'youtube' ? t('yt_source_youtube') : t('yt_source_metadata')].filter(Boolean).join(' · ')}
+                      </div>
+                      {v.summary && (
+                        <div style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text-1)', marginBottom: 4 }}>{pick(v.summary)}</div>
+                      )}
+                      {(v.key_points || []).length > 0 && (
+                        <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--text-2)' }}>
+                          {v.key_points.slice(0, 3).map((p, j) => <li key={j}>{pick(p)}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })()}
+      </Section>
 
     </div>
   )
