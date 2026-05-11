@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getJpStockDetail, refreshJpStock } from '../api/client'
+import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo } from '../api/client'
 import { useLang } from '../context/LangContext'
 
 // ── Candlestick chart ─────────────────────────────────────────────────────────
@@ -308,7 +308,9 @@ export default function JapanStockDetail({ code, onBack }) {
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]         = useState(null)
-  const [period, setPeriod]       = useState(90)
+  const [period, setPeriod]         = useState(90)
+  const [companyInfo, setCompanyInfo] = useState(undefined)
+  const [fetchingInfo, setFetchingInfo] = useState(false)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -336,6 +338,19 @@ export default function JapanStockDetail({ code, onBack }) {
   }
 
   useEffect(() => { fetchDetail() }, [fetchDetail])
+  useEffect(() => { if (detail) setCompanyInfo(detail.company_info ?? null) }, [detail])
+
+  const handleFetchCompanyInfo = async () => {
+    setFetchingInfo(true)
+    try {
+      const { data } = await fetchJpCompanyInfo(code)
+      setCompanyInfo(data && Object.keys(data).length ? data : null)
+    } catch (e) {
+      console.error('Company info fetch failed:', e)
+    } finally {
+      setFetchingInfo(false)
+    }
+  }
 
   // ── Loading / error states ──────────────────────────────────────────────────
 
@@ -471,7 +486,7 @@ export default function JapanStockDetail({ code, onBack }) {
 
       {/* ── Company overview (AI) ── */}
       {(() => {
-        const info = detail.company_info || {}
+        const info = companyInfo || {}
         const hasError = info.error === 'no_credits'
         const summary = (lang === 'ja' ? info.ja : null) || info.en || info.ja || ''
         return (
@@ -489,12 +504,32 @@ export default function JapanStockDetail({ code, onBack }) {
                 }}>
                   {summary}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
-                  {t('jp_company_info_credit')}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}>
+                    {t('jp_company_info_credit')}
+                  </span>
+                  <button
+                    onClick={handleFetchCompanyInfo}
+                    disabled={fetchingInfo}
+                    style={{ fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}
+                  >
+                    {fetchingInfo ? t('jp_company_info_generating') : t('jp_company_info_regenerate')}
+                  </button>
                 </div>
               </div>
             ) : (
-              <NoContent label={t('jp_detail_no_content')} />
+              <div style={{ textAlign: 'center', padding: '20px 16px' }}>
+                <div style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 12 }}>
+                  {t('jp_company_info_prompt')}
+                </div>
+                <button
+                  onClick={handleFetchCompanyInfo}
+                  disabled={fetchingInfo}
+                  style={{ background: 'var(--blue)', color: '#fff', border: 'none', padding: '8px 20px', fontSize: 13, borderRadius: 'var(--r-sm)', cursor: fetchingInfo ? 'default' : 'pointer', opacity: fetchingInfo ? 0.7 : 1 }}
+                >
+                  {fetchingInfo ? t('jp_company_info_generating') : t('jp_company_info_generate')}
+                </button>
+              </div>
             )}
           </Section>
         )

@@ -380,6 +380,30 @@ async def get_stock_detail_endpoint(code: str):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/stocks/{code}/company-info")
+async def fetch_company_info_endpoint(code: str):
+    """Trigger on-demand Claude web-search company overview for one stock."""
+    from app.services.company_info import fetch_company_info
+    import json
+    if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
+    if not row:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    result = await fetch_company_info(
+        row["name"] or "", row["name_en"] or "", code.upper(), settings.anthropic_api_key
+    )
+    if result and "error" not in result:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jp_listings SET company_info=$1, company_info_fetched_at=NOW() WHERE code=$2",
+                json.dumps(result), code.upper(),
+            )
+    return result or {}
+
+
 @router.post("/stocks/{code}/refresh")
 async def refresh_stock(code: str):
     """Re-fetch 90-day prices from JQuants for one stock, then return updated detail."""

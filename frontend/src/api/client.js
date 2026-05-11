@@ -35,4 +35,5 @@ export const getJpStockChart = (code) => client.get(`/jquants/stocks/${code}/cha
 export const getJpFilters = () => client.get('/jquants/filters')
 export const getJpStockDetail = (code) => client.get(`/jquants/stocks/${code}/detail`)
 export const refreshJpStock = (code) => client.post(`/jquants/stocks/${code}/refresh`)
+export const fetchJpCompanyInfo = (code) => client.post(`/jquants/stocks/${code}/company-info`)
 export const computeJpAqr = () => client.post('/jquants/compute/aqr')

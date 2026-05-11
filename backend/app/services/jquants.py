@@ -964,30 +964,12 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         for r in price_rows
     ]
 
-    # Company info: serve from DB cache (30-day TTL), fetch fresh if absent/stale
-    from app.services.company_info import fetch_company_info
-    from app.config import settings as _settings
-
+    # Company info: return from DB cache only — fetch is triggered on demand via POST endpoint
     company_info = None
     if listing:
-        fetched_at = listing["company_info_fetched_at"]
-        cache_age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
         raw = listing["company_info"]
-        if cache_age is not None and cache_age <= 30 and raw:
+        if raw:
             company_info = json.loads(raw)
-        else:
-            company_info = await fetch_company_info(
-                listing["name"] or "",
-                listing["name_en"] or "",
-                code,
-                _settings.anthropic_api_key,
-            )
-            if company_info and "error" not in company_info:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        "UPDATE jp_listings SET company_info=$1, company_info_fetched_at=NOW() WHERE code=$2",
-                        json.dumps(company_info), code,
-                    )
 
     fins = None
     try:
