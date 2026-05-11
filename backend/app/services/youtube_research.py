@@ -215,14 +215,9 @@ async def _get_transcript(video_id: str) -> tuple[str, str]:
 
 # ── AI analysis ────────────────────────────────────────────────────────────────
 
-def _fallback_report(text: str) -> dict:
-    return {
-        "executive_summary": {"en": text[:500], "ja": "", "zh": ""},
-        "overall_sentiment": "neutral",
-        "sentiment_score": 0.5,
-        "key_findings": [],
-        "videos": [],
-    }
+def _extract_tag(tag: str, text: str) -> str:
+    m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
+    return m.group(1).strip() if m else ""
 
 
 async def _analyze_with_claude(
@@ -231,62 +226,80 @@ async def _analyze_with_claude(
     name_en: str,
     anthropic_api_key: str,
 ) -> dict:
-    """Analyze videos and return a structured trilingual report."""
+    """Analyze videos and return a trilingual Markdown report."""
     company = name_en or name
 
     contexts = []
-    for v in videos[:8]:
+    for v in videos[:6]:
         content = v.get("transcript") or f"Description: {v.get('description', 'N/A')}"
         contexts.append(
-            f"## {v['title']}\n"
+            f"### {v['title']}\n"
             f"Channel: {v['channel']} | Date: {v.get('published_at', '')} | URL: {v['url']}\n"
-            f"Transcript source: {v.get('transcript_source', 'unknown')}\n"
-            f"{content[:2500]}"
+            f"{content[:2000]}"
         )
 
+    video_list = "\n".join(
+        f"- [{v['title']}]({v['url']}) — {v.get('channel', '')} ({v.get('published_at', '')})"
+        for v in videos
+    )
+
     prompt = (
-        f"Analyze these YouTube videos about {company} ({name}), a Japanese listed company.\n\n"
+        f"You are analyzing YouTube videos about **{company}** ({name}), a Japanese listed company.\n\n"
+        "## Video transcripts / descriptions\n\n"
         + "\n\n---\n\n".join(contexts)
         + "\n\n---\n\n"
-        "Generate a structured research report in valid JSON (no markdown, no code blocks):\n\n"
-        "{\n"
-        '  "executive_summary": {"en": "2-3 paragraph English summary", "ja": "日本語サマリー", "zh": "中文摘要"},\n'
-        '  "overall_sentiment": "positive|neutral|negative",\n'
-        '  "sentiment_score": 0.0,\n'
-        '  "key_findings": [{"en": "...", "ja": "...", "zh": "..."}],\n'
-        '  "videos": [\n'
-        '    {\n'
-        '      "video_id": "...", "title": "...", "channel": "...", "url": "...", "published_at": "...",\n'
-        '      "category": "financial|review|stock|pr|other",\n'
-        '      "sentiment": "positive|neutral|negative", "sentiment_score": 0.0,\n'
-        '      "summary": {"en": "2-3 sentences", "ja": "...", "zh": "..."},\n'
-        '      "key_points": [{"en": "...", "ja": "...", "zh": "..."}],\n'
-        '      "transcript_source": "youtube|metadata_only"\n'
-        '    }\n'
-        '  ]\n'
-        "}"
+        "Write a research report in **three languages**. "
+        "Wrap each section with the exact XML tags shown below. "
+        "Inside each tag write well-structured Markdown (use ## headers, bullet lists, **bold**).\n\n"
+        "Required sections inside each language block:\n"
+        "  ## Executive Summary  (2–3 paragraphs)\n"
+        "  ## Key Findings  (5–7 bullet points)\n"
+        "  ## Overall Sentiment  (positive / neutral / negative + one-sentence reason)\n"
+        "  ## Video Analysis  (one ### subsection per video: title, channel, date, 2-sentence summary, 2-3 bullet key points)\n\n"
+        "<EN>\n[English Markdown report here]\n</EN>\n\n"
+        "<JA>\n[Japanese Markdown report here — 日本語]\n</JA>\n\n"
+        "<ZH>\n[Simplified Chinese Markdown report here — 简体中文]\n</ZH>\n\n"
+        "After </ZH>, on separate lines, output exactly:\n"
+        "SENTIMENT: positive|neutral|negative\n"
+        "SCORE: 0.0"
     )
 
     client = anthropic.AsyncAnthropic(api_key=anthropic_api_key)
     response = await client.messages.create(
-        model=_MODEL, max_tokens=5000,
+        model=_MODEL, max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
     text = "\n".join(b.text for b in response.content if hasattr(b, "text") and b.text)
 
-    try:
-        clean = re.sub(r"```(?:json)?", "", text).strip().strip("`")
-        report = json.loads(clean)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, re.DOTALL)
-        try:
-            report = json.loads(m.group()) if m else _fallback_report(text)
-        except Exception:
-            report = _fallback_report(text)
+    en_md = _extract_tag("EN", text)
+    ja_md = _extract_tag("JA", text)
+    zh_md = _extract_tag("ZH", text)
 
-    report["generated_at"] = datetime.utcnow().isoformat() + "Z"
-    report["videos_analyzed"] = len(videos)
-    return report
+    if not en_md:
+        en_md = text[:2000]
+        logger.warning(f"Could not parse EN section from YouTube report for {name}")
+
+    sent_m  = re.search(r"SENTIMENT:\s*(positive|neutral|negative)", text, re.IGNORECASE)
+    score_m = re.search(r"SCORE:\s*([0-9.]+)", text)
+
+    return {
+        "report": {"en": en_md, "ja": ja_md, "zh": zh_md},
+        "overall_sentiment": sent_m.group(1).lower() if sent_m else "neutral",
+        "sentiment_score": float(score_m.group(1)) if score_m else 0.5,
+        "videos_analyzed": len(videos),
+        "videos": [
+            {
+                "video_id": v["video_id"],
+                "title": v["title"],
+                "channel": v.get("channel", ""),
+                "url": v["url"],
+                "published_at": v.get("published_at", ""),
+                "transcript_source": v.get("transcript_source", "metadata_only"),
+            }
+            for v in videos
+        ],
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 # ── Main entry point ───────────────────────────────────────────────────────────
