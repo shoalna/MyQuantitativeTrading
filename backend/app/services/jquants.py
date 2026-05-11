@@ -69,6 +69,8 @@ class JQuantsClient:
                     logger.warning(f"Rate limited (attempt {attempt}/3). Waiting {wait}s.")
                     await asyncio.sleep(wait)
                     continue
+                if resp.status_code == 403:
+                    logger.warning(f"JQuants 403 on {endpoint}: {resp.text[:300]}")
                 resp.raise_for_status()
                 return resp.json()
             except httpx.HTTPStatusError:

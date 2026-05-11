@@ -653,7 +653,7 @@ export default function JapanStockDetail({ code, onBack }) {
       {(() => {
         const info = companyInfo || {}
         const hasError = info.error === 'no_credits'
-        const summary = (lang === 'ja' ? info.ja : null) || info.en || info.ja || ''
+        const summary = (lang === 'ja' ? info.ja : lang === 'zh' ? info.zh : null) || info.en || info.ja || info.zh || ''
         return (
           <Section icon="🏢" title={t('jp_detail_company_info')}>
             {hasError ? (
@@ -721,7 +721,7 @@ export default function JapanStockDetail({ code, onBack }) {
                     { field: 'strengths',  key: 'shikiho_strengths'  },
                     { field: 'ai_relation', key: 'shikiho_ai_relation' },
                   ].map(({ field, key }) => {
-                    const content = (lang === 'ja' ? analysis[field]?.ja : null) || analysis[field]?.en || ''
+                    const content = (lang === 'ja' ? analysis[field]?.ja : lang === 'zh' ? analysis[field]?.zh : null) || analysis[field]?.en || analysis[field]?.ja || analysis[field]?.zh || ''
                     return (
                       <div key={field} style={{ marginBottom: 10 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)', marginBottom: 3 }}>
