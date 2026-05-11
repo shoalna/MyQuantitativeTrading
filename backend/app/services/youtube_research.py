@@ -30,31 +30,99 @@ def _generate_queries(
     name: str,
     name_en: str,
     keywords: list[str] | None = None,
-    channels: list[str] | None = None,
 ) -> list[str]:
+    """Build keyword-based search queries. Channel filtering is handled separately."""
     company = name_en or name
     kws = keywords if keywords else ["決算 業績", "stock analysis", "株価 評論", "earnings results", "投資家 IR", "news business"]
     queries = [f"{company} {kw}" for kw in kws[:6]]
     if name and name != company and not keywords:
-        # replace two English-only defaults with Japanese company name variants
         queries[2] = f"{name} 株価 評論"
         queries[4] = f"{name} 投資家 IR"
-    if channels:
-        for ch in channels[:3]:
-            queries.append(f"{company} {ch}")
     return queries[:10]
 
 
 # ── Video search ───────────────────────────────────────────────────────────────
 
+def _make_video_dict(vid_id: str, snippet: dict) -> dict:
+    return {
+        "video_id": vid_id,
+        "title": snippet.get("title", ""),
+        "channel": snippet.get("channelTitle", ""),
+        "published_at": snippet.get("publishedAt", "")[:10],
+        "description": snippet.get("description", "")[:300],
+        "url": f"https://www.youtube.com/watch?v={vid_id}",
+    }
+
+
+async def _resolve_channel_id(name: str, youtube_api_key: str, http: httpx.AsyncClient) -> str | None:
+    """Resolve a channel display name to its YouTube channel ID."""
+    try:
+        resp = await http.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={"q": name, "type": "channel", "part": "id", "maxResults": 1, "key": youtube_api_key},
+        )
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            if items:
+                return items[0]["id"]["channelId"]
+    except Exception as exc:
+        logger.warning(f"Channel ID lookup failed for '{name}': {exc}")
+    return None
+
+
 async def _search_youtube_api(
     queries: list[str],
     youtube_api_key: str,
+    channels: list[str] | None = None,
     max_per_query: int = 3,
 ) -> dict[str, dict]:
-    """Search YouTube Data API v3. Returns {video_id: video_dict}."""
+    """
+    Search YouTube Data API v3.
+
+    When channels are provided: resolve names → channel IDs → search within each
+    channel (channel-specific search). Skipped entirely when channels is empty.
+
+    When channels are not provided: general keyword search across all channels.
+    """
     videos: dict[str, dict] = {}
     async with httpx.AsyncClient(timeout=20) as http:
+
+        if channels:
+            # ── Channel search ────────────────────────────────────────────────
+            channel_ids: list[str] = []
+            for ch_name in channels[:5]:
+                ch_id = await _resolve_channel_id(ch_name, youtube_api_key, http)
+                if ch_id:
+                    channel_ids.append(ch_id)
+            logger.info(f"Resolved {len(channel_ids)}/{len(channels)} channel IDs for channel search")
+
+            if channel_ids:
+                for ch_id in channel_ids:
+                    for query in queries[:3]:
+                        try:
+                            resp = await http.get(
+                                "https://www.googleapis.com/youtube/v3/search",
+                                params={
+                                    "q": query, "type": "video", "part": "snippet",
+                                    "maxResults": max_per_query, "order": "date",
+                                    "channelId": ch_id, "key": youtube_api_key,
+                                },
+                            )
+                            if resp.status_code != 200:
+                                logger.warning(f"YouTube channel search {resp.status_code} ch={ch_id} q='{query}'")
+                                continue
+                            for item in resp.json().get("items", []):
+                                vid_id = item["id"]["videoId"]
+                                if vid_id not in videos:
+                                    videos[vid_id] = _make_video_dict(vid_id, item["snippet"])
+                        except Exception as exc:
+                            logger.warning(f"YouTube channel search error: {exc}")
+            # If no channel IDs resolved, fall through to general search below
+            if videos:
+                return videos
+            logger.warning("No channel IDs resolved — falling back to general search")
+
+        # ── General search (no channels, or channel search yielded nothing) ──
         for query in queries:
             try:
                 resp = await http.get(
@@ -71,15 +139,7 @@ async def _search_youtube_api(
                 for item in resp.json().get("items", []):
                     vid_id = item["id"]["videoId"]
                     if vid_id not in videos:
-                        s = item["snippet"]
-                        videos[vid_id] = {
-                            "video_id": vid_id,
-                            "title": s.get("title", ""),
-                            "channel": s.get("channelTitle", ""),
-                            "published_at": s.get("publishedAt", "")[:10],
-                            "description": s.get("description", "")[:300],
-                            "url": f"https://www.youtube.com/watch?v={vid_id}",
-                        }
+                        videos[vid_id] = _make_video_dict(vid_id, item["snippet"])
             except Exception as exc:
                 logger.warning(f"YouTube API query failed '{query}': {exc}")
     return videos
@@ -89,12 +149,17 @@ async def _search_youtube_claude(
     name: str,
     name_en: str,
     anthropic_api_key: str,
+    channels: list[str] | None = None,
 ) -> dict[str, dict]:
     """Fallback: find YouTube videos via Claude web_search."""
     company = name_en or name
+    channel_hint = (
+        f" Prioritize videos from these channels if available: {', '.join(channels[:5])}."
+        if channels else ""
+    )
     prompt = (
         f"Find 6-8 recent YouTube videos (2024-2025) about the Japanese company {company} ({name}). "
-        "Look for videos on financial results, stock analysis, business news, and investor commentary. "
+        f"Look for videos on financial results, stock analysis, business news, and investor commentary.{channel_hint} "
         "Return ONLY a JSON array (no explanation):\n"
         '[{"url":"https://www.youtube.com/watch?v=VIDEO_ID","title":"...","channel":"...","published_at":"YYYY-MM-DD"}]'
     )
@@ -243,12 +308,12 @@ async def fetch_youtube_report(
         return None
 
     try:
-        queries = _generate_queries(name, name_en, keywords=keywords, channels=channels)
+        queries = _generate_queries(name, name_en, keywords=keywords)
 
         if youtube_api_key and not youtube_api_key.startswith("your_"):
-            videos_map = await _search_youtube_api(queries, youtube_api_key)
+            videos_map = await _search_youtube_api(queries, youtube_api_key, channels=channels or None)
         else:
-            videos_map = await _search_youtube_claude(name, name_en, anthropic_api_key)
+            videos_map = await _search_youtube_claude(name, name_en, anthropic_api_key, channels=channels or None)
 
         if not videos_map:
             logger.warning(f"No YouTube videos found for {code} ({name})")
