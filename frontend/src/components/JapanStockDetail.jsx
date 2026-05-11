@@ -537,13 +537,7 @@ export default function JapanStockDetail({ code, onBack }) {
 
       {/* ── 四季報 ── */}
       <Section icon="📊" title={t('jp_detail_shikiho')}>
-        {detail.fins?.plan_error ? (
-          <NoContent label={t('fins_no_plan')} />
-        ) : detail.fins?.records?.length > 0 ? (
-          <ShikihoTable fins={detail.fins} t={t} />
-        ) : (
-          <NoContent label={t('jp_detail_no_content')} />
-        )}
+        <NoContent label={t('jp_detail_no_content')} />
       </Section>
 
       {/* ── Placeholder sections ── */}

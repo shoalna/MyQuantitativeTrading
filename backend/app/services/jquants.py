@@ -972,10 +972,6 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             company_info = json.loads(raw)
 
     fins = None
-    try:
-        fins = await get_financial_statements(pool, code)
-    except Exception as exc:
-        logger.warning(f"Financial statements fetch failed for {code}: {exc}")
 
     return {
         "code": code,
