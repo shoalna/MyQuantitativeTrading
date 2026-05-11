@@ -8,7 +8,7 @@ from app.database import get_pool
 from app.services.jquants import (
     JQuantsClient, get_chart_data, get_stock_detail,
     refresh_listings, refresh_prices, compute_aqr_scores,
-    _normalize_quote, _store_daily_prices, _to_yyyymmdd,
+    _normalize_quote, _store_daily_prices, _to_yyyymmdd, get_quarterly_fins,
 )
 
 logger = logging.getLogger(__name__)
@@ -406,7 +406,7 @@ async def fetch_company_info_endpoint(code: str):
 
 @router.post("/stocks/{code}/refresh")
 async def refresh_stock(code: str):
-    """Re-fetch 90-day prices from JQuants for one stock, then return updated detail."""
+    """Re-fetch 90-day prices and quarterly fins from JQuants for one stock."""
     if not settings.jquants_api_key:
         raise HTTPException(status_code=400, detail="JQUANTS_API_KEY is not set in .env")
     pool   = await get_pool()
@@ -414,6 +414,11 @@ async def refresh_stock(code: str):
     today  = date.today()
     from_d = today - timedelta(days=90)
     try:
+        # Invalidate fins cache so get_stock_detail re-fetches
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jp_listings SET fins_fetched_at=NULL WHERE code=$1", code.upper()
+            )
         raw    = await client.get_daily_quotes(code=code.upper(), from_date=_to_yyyymmdd(from_d), to_date=_to_yyyymmdd(today))
         quotes = sorted((_normalize_quote(r) for r in raw), key=lambda x: x["date"])
         await _store_daily_prices(pool, quotes)

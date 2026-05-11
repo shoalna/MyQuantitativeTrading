@@ -138,6 +138,20 @@ class JQuantsClient:
             "field_names": list(records[0].keys()) if records else [],
         }
 
+    async def get_fins_statements(self, code: str) -> list[dict]:
+        """Fetch all financial statements for a stock from JQuants /fins/statements."""
+        all_records: list[dict] = []
+        params: dict = {"code": code}
+        while True:
+            data = await self._get("/fins/statements", params)
+            records = data.get("statements", [])
+            all_records.extend(records)
+            pk = data.get("pagination_key", "")
+            if not pk:
+                break
+            params["pagination_key"] = pk
+        return all_records
+
     async def get_daily_quotes(
         self,
         code: Optional[str] = None,
@@ -753,33 +767,124 @@ async def get_chart_data(pool, client: JQuantsClient, code: str) -> list[dict]:
     return result
 
 
-# ── Financial statements (EDINET) ─────────────────────────────────────────────
+# ── Quarterly financial statements (JQuants) ──────────────────────────────────
 
-async def get_financial_statements(pool, code: str) -> dict | None:
-    """Return EDINET financial statements (30-day DB cache)."""
-    from app.services.edinet import fetch_edinet_financials
-    from app.config import settings
+def _safe_float(v) -> Optional[float]:
+    try:
+        return None if v in (None, "", "-") else float(v)
+    except (ValueError, TypeError):
+        return None
 
+
+def _parse_quarterly_fins(statements: list[dict]) -> list[dict]:
+    """
+    Convert JQuants cumulative quarterly statements into individual quarter values.
+    De-cumulates within each fiscal year and computes YoY op-profit change.
+    Returns up to 8 quarters sorted chronologically.
+    """
+    from collections import defaultdict
+
+    valid_types = {"1Q", "2Q", "3Q", "FY"}
+    best: dict[tuple, dict] = {}
+
+    for s in statements:
+        period_type = s.get("TypeOfCurrentPeriod", "")
+        if period_type not in valid_types:
+            continue
+        doc_type = s.get("TypeOfDocument", "")
+        if "Forecast" in doc_type or "Revision" in doc_type:
+            continue
+        fy_start = s.get("CurrentFiscalYearStartDate", "")
+        if not fy_start or len(fy_start) < 4:
+            continue
+        fy_year = int(fy_start[:4])
+        disclosed = s.get("DisclosedDate", "")
+        is_consol = "Consolidated" in doc_type
+
+        key = (fy_year, period_type)
+        prev = best.get(key)
+        prev_consol = "Consolidated" in (prev or {}).get("_doc_type", "")
+        if prev is None or (is_consol and not prev_consol) or \
+                (is_consol == prev_consol and disclosed > prev.get("_disclosed", "")):
+            best[key] = {
+                "fy_year": fy_year, "period_type": period_type,
+                "_disclosed": disclosed, "_doc_type": doc_type,
+                "net_sales":  _safe_float(s.get("NetSales")),
+                "op_profit":  _safe_float(s.get("OperatingProfit") or s.get("OperatingIncome")),
+                "net_income": _safe_float(s.get("Profit") or s.get("NetIncome")),
+            }
+
+    def _sub(a: Optional[dict], b: Optional[dict], key: str) -> Optional[float]:
+        av = (a or {}).get(key)
+        bv = (b or {}).get(key)
+        return None if av is None else (av if bv is None else av - bv)
+
+    by_fy: dict = defaultdict(dict)
+    for s in best.values():
+        by_fy[s["fy_year"]][s["period_type"]] = s
+
+    quarters: list[dict] = []
+    for fy_year in sorted(by_fy.keys()):
+        fy = by_fy[fy_year]
+        q1, q2, q3, fy_d = fy.get("1Q"), fy.get("2Q"), fy.get("3Q"), fy.get("FY")
+        yr = str(fy_year)[2:]
+
+        if q1:
+            quarters.append({"fy_year": fy_year, "quarter": "1Q", "label": f"{yr}Q1",
+                              "net_sales": q1["net_sales"], "op_profit": q1["op_profit"], "net_income": q1["net_income"]})
+        if q2:
+            quarters.append({"fy_year": fy_year, "quarter": "2Q", "label": f"{yr}Q2",
+                              "net_sales": _sub(q2, q1, "net_sales"), "op_profit": _sub(q2, q1, "op_profit"), "net_income": _sub(q2, q1, "net_income")})
+        if q3:
+            prev = q2 or q1
+            quarters.append({"fy_year": fy_year, "quarter": "3Q", "label": f"{yr}Q3",
+                              "net_sales": _sub(q3, prev, "net_sales"), "op_profit": _sub(q3, prev, "op_profit"), "net_income": _sub(q3, prev, "net_income")})
+        if fy_d:
+            prev = q3 or q2 or q1
+            quarters.append({"fy_year": fy_year, "quarter": "FY", "label": f"{yr}Q4",
+                              "net_sales": _sub(fy_d, prev, "net_sales"), "op_profit": _sub(fy_d, prev, "op_profit"), "net_income": _sub(fy_d, prev, "net_income")})
+
+    q_map = {(q["fy_year"], q["quarter"]): q for q in quarters}
+    for q in quarters:
+        prev = q_map.get((q["fy_year"] - 1, q["quarter"]))
+        if prev and prev.get("op_profit") and q.get("op_profit") is not None:
+            q["op_profit_yoy"] = round((q["op_profit"] - prev["op_profit"]) / abs(prev["op_profit"]) * 100, 1)
+        else:
+            q["op_profit_yoy"] = None
+
+    return quarters[-8:]
+
+
+async def get_quarterly_fins(pool, client: Optional[JQuantsClient], code: str) -> Optional[list]:
+    """Return quarterly financial data with 30-day DB cache."""
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT fins_data, fins_fetched_at FROM jp_listings WHERE code = $1", code
+            "SELECT fins_data, fins_fetched_at FROM jp_listings WHERE code=$1", code
         )
 
-    if row:
-        fetched_at = row["fins_fetched_at"]
-        age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
-        raw = row["fins_data"]
-        if age is not None and age <= 30 and raw:
-            return json.loads(raw)
+    if row and row["fins_fetched_at"] and row["fins_data"]:
+        age = (datetime.utcnow() - row["fins_fetched_at"].replace(tzinfo=None)).days
+        if age < 30:
+            cached = json.loads(row["fins_data"])
+            if isinstance(cached, list):
+                return cached
 
-    fins = await fetch_edinet_financials(code, settings.edinet_api_key)
-    if fins:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE jp_listings SET fins_data=$1, fins_fetched_at=NOW() WHERE code=$2",
-                json.dumps(fins), code,
-            )
-    return fins
+    if not client:
+        return None
+
+    try:
+        statements = await client.get_fins_statements(code)
+        quarterly = _parse_quarterly_fins(statements)
+        if quarterly:
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE jp_listings SET fins_data=$1, fins_fetched_at=NOW() WHERE code=$2",
+                    json.dumps(quarterly), code,
+                )
+        return quarterly or None
+    except Exception as exc:
+        logger.warning(f"Quarterly fins fetch failed for {code}: {exc}")
+        return None
 
 
 # ── Wikipedia & stock detail ───────────────────────────────────────────────────
@@ -971,7 +1076,11 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         if raw:
             company_info = json.loads(raw)
 
-    fins = None
+    quarterly_fins = None
+    try:
+        quarterly_fins = await get_quarterly_fins(pool, client, code)
+    except Exception as exc:
+        logger.warning(f"Quarterly fins failed for {code}: {exc}")
 
     return {
         "code": code,
@@ -987,9 +1096,9 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             summary["updated_at"].replace(tzinfo=None).isoformat() + "Z"
             if summary and summary["updated_at"] else None
         ),
-        "daily_prices":  daily_prices,
-        "company_info":  company_info,
-        "fins":          fins,
+        "daily_prices":    daily_prices,
+        "company_info":    company_info,
+        "quarterly_fins":  quarterly_fins,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
         "scores": {
             "tsmom":  float(summary["score_tsmom"])   if summary and summary["score_tsmom"]   is not None else None,

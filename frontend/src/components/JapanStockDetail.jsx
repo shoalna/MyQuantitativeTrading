@@ -184,6 +184,171 @@ function ShikihoTable({ fins, t }) {
   )
 }
 
+// ── Quarterly financial chart ─────────────────────────────────────────────────
+
+function fmtMoney(v) {
+  if (v == null) return ''
+  const abs = Math.abs(v)
+  if (abs >= 1e12) return `${(v / 1e12).toFixed(1)}兆`
+  if (abs >= 1e8)  return `${(v / 1e8).toFixed(0)}億`
+  if (abs >= 1e6)  return `${(v / 1e6).toFixed(0)}M`
+  return v.toFixed(0)
+}
+
+function niceMonTicks(min, max) {
+  const range = max - min || 1
+  const step0 = range / 5
+  const mag = Math.pow(10, Math.floor(Math.log10(step0)))
+  const step = [1, 2, 5, 10].map(f => f * mag).find(s => s >= step0) || mag * 10
+  const lo = Math.floor(min / step) * step
+  const hi = Math.ceil(max / step) * step
+  const ticks = []
+  for (let v = lo; v <= hi + step * 0.01; v += step) ticks.push(Math.round(v * 1e4) / 1e4)
+  return ticks
+}
+
+function QuarterlyChart({ data, t }) {
+  if (!data || data.length === 0) return <NoContent label={t('jp_detail_no_content')} />
+
+  const PAD_L = 72, PAD_R = 52, PAD_T = 12, PAD_B = 32, CHART_H = 250
+  const Q_W = 62, BAR_W = 18, BAR_GAP = 3
+
+  const n = data.length
+  const plotW = n * Q_W
+  const plotH = CHART_H - PAD_T - PAD_B
+  const width = PAD_L + plotW + PAD_R
+
+  // Monetary scale (left) — revenue, op_profit, net_income
+  const monVals = data.flatMap(d => [d.net_sales, d.op_profit, d.net_income].filter(v => v != null))
+  const monMin = Math.min(0, ...monVals)
+  const monMax = Math.max(...monVals) * 1.12
+  const monRange = monMax - monMin || 1
+  const monY = v => v == null ? null : PAD_T + (1 - (v - monMin) / monRange) * plotH
+
+  // YoY % scale (right) — symmetric
+  const yoyVals = data.map(d => d.op_profit_yoy).filter(v => v != null)
+  const yoyAbs = yoyVals.length ? Math.max(Math.abs(Math.min(...yoyVals)), Math.abs(Math.max(...yoyVals)), 30) * 1.3 : 100
+  const yoyMin = -yoyAbs, yoyMax = yoyAbs
+  const yoyRange = yoyMax - yoyMin
+  const yoyY = v => v == null ? null : PAD_T + (1 - (v - yoyMin) / yoyRange) * plotH
+  const zeroYoy = PAD_T + (1 - (0 - yoyMin) / yoyRange) * plotH
+
+  const monTicks = niceMonTicks(monMin, monMax)
+  const zeroMon = monY(0)
+
+  // Line point builders
+  const linePoints = (fn) => data.map((d, i) => {
+    const x = PAD_L + i * Q_W + Q_W / 2
+    const y = fn(d)
+    return y != null ? [x, y] : null
+  })
+
+  const polylines = (pts) => {
+    const segs = []; let cur = []
+    for (const p of pts) {
+      if (p) { cur.push(p) }
+      else { if (cur.length > 1) segs.push(cur); cur = [] }
+    }
+    if (cur.length > 1) segs.push(cur)
+    return segs
+  }
+
+  const niPts  = linePoints(d => monY(d.net_income))
+  const yoyPts = linePoints(d => yoyY(d.op_profit_yoy))
+  const niSegs  = polylines(niPts)
+  const yoySegs = polylines(yoyPts)
+
+  return (
+    <div>
+      <div style={{ overflowX: 'auto', overflowY: 'hidden' }}>
+        <svg width={width} height={CHART_H} style={{ display: 'block' }}>
+          {/* Monetary grid + left labels */}
+          {monTicks.map((v, i) => (
+            <g key={i}>
+              <line x1={PAD_L} y1={monY(v)} x2={PAD_L + plotW} y2={monY(v)}
+                stroke="var(--border)" strokeWidth={0.5} strokeDasharray="4,4" />
+              <text x={PAD_L - 5} y={monY(v) + 4} textAnchor="end" fontSize={10} fill="var(--text-3)">
+                {fmtMoney(v)}
+              </text>
+            </g>
+          ))}
+
+          {/* YoY zero reference */}
+          <line x1={PAD_L} y1={zeroYoy} x2={PAD_L + plotW} y2={zeroYoy}
+            stroke="#f59e0b" strokeWidth={0.4} strokeDasharray="2,6" opacity={0.6} />
+
+          {/* Right Y-axis labels (YoY %) */}
+          {[-50, 0, 50].filter(v => v >= yoyMin && v <= yoyMax).map(v => (
+            <text key={v} x={PAD_L + plotW + 5} y={yoyY(v) + 4}
+              textAnchor="start" fontSize={10} fill="#f59e0b">
+              {v > 0 ? '+' : ''}{v}%
+            </text>
+          ))}
+
+          {/* Bars */}
+          {data.map((d, i) => {
+            const gx = PAD_L + i * Q_W + (Q_W - BAR_W * 2 - BAR_GAP) / 2
+            const draw = (val, x, color, opacity) => {
+              if (val == null) return null
+              const top = Math.min(monY(val), zeroMon)
+              const h = Math.max(1, Math.abs(zeroMon - monY(val)))
+              return <rect x={x} y={top} width={BAR_W} height={h} fill={color} opacity={opacity} />
+            }
+            return (
+              <g key={d.label}>
+                {draw(d.net_sales,  gx,              'var(--blue)', 0.25)}
+                {draw(d.op_profit,  gx + BAR_W + BAR_GAP, 'var(--blue)', 0.85)}
+              </g>
+            )
+          })}
+
+          {/* Net income line */}
+          {niSegs.map((seg, i) => (
+            <polyline key={i} points={seg.map(p => p.join(',')).join(' ')}
+              fill="none" stroke="#22c55e" strokeWidth={2} />
+          ))}
+          {niPts.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={3} fill="#22c55e" />)}
+
+          {/* YoY change line */}
+          {yoySegs.map((seg, i) => (
+            <polyline key={i} points={seg.map(p => p.join(',')).join(' ')}
+              fill="none" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5,3" />
+          ))}
+          {yoyPts.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={2.5} fill="#f59e0b" />)}
+
+          {/* X labels */}
+          {data.map((d, i) => (
+            <text key={i} x={PAD_L + i * Q_W + Q_W / 2} y={CHART_H - 8}
+              textAnchor="middle" fontSize={9} fill="var(--text-3)">
+              {d.label}
+            </text>
+          ))}
+        </svg>
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 14, fontSize: 11, color: 'var(--text-2)', marginTop: 8, flexWrap: 'wrap' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 14, height: 10, background: 'rgba(59,130,246,0.25)', display: 'inline-block' }} />
+          {t('shikiho_legend_revenue')}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ width: 14, height: 10, background: 'rgba(59,130,246,0.85)', display: 'inline-block' }} />
+          {t('shikiho_legend_op_profit')}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#22c55e' }}>
+          <span style={{ width: 14, height: 2, background: '#22c55e', display: 'inline-block' }} />
+          {t('shikiho_legend_net_income')}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#f59e0b' }}>
+          <span style={{ width: 14, height: 2, background: '#f59e0b', display: 'inline-block', borderTop: '2px dashed #f59e0b', height: 0 }} />
+          {t('shikiho_legend_yoy')}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 // ── Strategy score table ──────────────────────────────────────────────────────
 
 function scoreColor(v, invert = false) {
@@ -537,7 +702,75 @@ export default function JapanStockDetail({ code, onBack }) {
 
       {/* ── 四季報 ── */}
       <Section icon="📊" title={t('jp_detail_shikiho')}>
-        <NoContent label={t('jp_detail_no_content')} />
+
+        {/* Business Analysis (AI) */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+            {t('shikiho_analysis')}
+          </div>
+          {(() => {
+            const info = companyInfo || {}
+            if (info.error === 'no_credits') return <NoContent label={t('company_info_no_credits')} />
+            const analysis = info.analysis
+            const hasData = analysis && (analysis.business?.en || analysis.strengths?.en || analysis.ai_relation?.en)
+            if (hasData) {
+              return (
+                <div>
+                  {[
+                    { field: 'business',   key: 'shikiho_business'   },
+                    { field: 'strengths',  key: 'shikiho_strengths'  },
+                    { field: 'ai_relation', key: 'shikiho_ai_relation' },
+                  ].map(({ field, key }) => {
+                    const content = (lang === 'ja' ? analysis[field]?.ja : null) || analysis[field]?.en || ''
+                    return (
+                      <div key={field} style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)', marginBottom: 3 }}>
+                          {t(key)}
+                        </div>
+                        <div style={{
+                          fontSize: 13, lineHeight: 1.7, color: 'var(--text-1)',
+                          background: 'var(--bg-surface)', padding: '8px 12px',
+                          borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
+                        }}>
+                          {content || '—'}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{t('jp_company_info_credit')}</span>
+                    <button onClick={handleFetchCompanyInfo} disabled={fetchingInfo}
+                      style={{ fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                      {fetchingInfo ? t('shikiho_generating') : t('shikiho_regenerate')}
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+            return (
+              <div style={{ textAlign: 'center', padding: '16px' }}>
+                <div style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 10 }}>
+                  {t('shikiho_generate_prompt')}
+                </div>
+                <button onClick={handleFetchCompanyInfo} disabled={fetchingInfo}
+                  style={{ background: 'var(--blue)', color: '#fff', border: 'none', padding: '7px 18px', fontSize: 13, borderRadius: 'var(--r-sm)', opacity: fetchingInfo ? 0.7 : 1 }}>
+                  {fetchingInfo ? t('shikiho_generating') : t('shikiho_generate')}
+                </button>
+              </div>
+            )
+          })()}
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--border)', marginBottom: 16 }} />
+
+        {/* Quarterly Financial Chart */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginBottom: 10 }}>
+            {t('shikiho_quarterly')}
+          </div>
+          <QuarterlyChart data={detail.quarterly_fins} t={t} />
+        </div>
+
       </Section>
 
       {/* ── Placeholder sections ── */}
