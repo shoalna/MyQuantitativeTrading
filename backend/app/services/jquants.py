@@ -915,7 +915,7 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     async with pool.acquire() as conn:
         listing = await conn.fetchrow(
             """SELECT code, name, name_en, sector, market,
-                      wiki_fetched_at, wiki_translations
+                      company_info, company_info_fetched_at
                FROM jp_listings WHERE code = $1""",
             code,
         )
@@ -964,23 +964,30 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         for r in price_rows
     ]
 
-    # Wikipedia: serve from DB cache (30-day TTL), fetch fresh if absent/stale/empty
+    # Company info: serve from DB cache (30-day TTL), fetch fresh if absent/stale
+    from app.services.company_info import fetch_company_info
+    from app.config import settings as _settings
+
+    company_info = None
     if listing:
-        fetched_at = listing["wiki_fetched_at"]
+        fetched_at = listing["company_info_fetched_at"]
         cache_age = (datetime.utcnow() - fetched_at.replace(tzinfo=None)).days if fetched_at else None
-        if cache_age is None or cache_age > 30 or not listing["wiki_translations"]:
-            translations = await fetch_wikipedia_all_langs(listing["name_en"] or "", listing["name"])
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE jp_listings SET wiki_translations=$1, wiki_fetched_at=NOW() WHERE code=$2",
-                    json.dumps(translations), code,
-                )
+        raw = listing["company_info"]
+        if cache_age is not None and cache_age <= 30 and raw:
+            company_info = json.loads(raw)
         else:
-            raw = listing["wiki_translations"]
-            translations = json.loads(raw) if raw else {}
-    else:
-        translations = {}
-    wikipedia = {"translations": translations}
+            company_info = await fetch_company_info(
+                listing["name"] or "",
+                listing["name_en"] or "",
+                code,
+                _settings.anthropic_api_key,
+            )
+            if company_info and "error" not in company_info:
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE jp_listings SET company_info=$1, company_info_fetched_at=NOW() WHERE code=$2",
+                        json.dumps(company_info), code,
+                    )
 
     fins = None
     try:
@@ -1002,9 +1009,9 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             summary["updated_at"].replace(tzinfo=None).isoformat() + "Z"
             if summary and summary["updated_at"] else None
         ),
-        "daily_prices": daily_prices,
-        "wikipedia":    wikipedia,
-        "fins":         fins,
+        "daily_prices":  daily_prices,
+        "company_info":  company_info,
+        "fins":          fins,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
         "scores": {
             "tsmom":  float(summary["score_tsmom"])   if summary and summary["score_tsmom"]   is not None else None,

@@ -309,7 +309,6 @@ export default function JapanStockDetail({ code, onBack }) {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]         = useState(null)
   const [period, setPeriod]       = useState(90)
-  const [wikiLang, setWikiLang]   = useState(null)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -470,55 +469,29 @@ export default function JapanStockDetail({ code, onBack }) {
         <StrategyTable scores={detail.scores} t={t} />
       </Section>
 
-      {/* ── Wikipedia ── */}
+      {/* ── Company overview (AI) ── */}
       {(() => {
-        const tr = detail.wikipedia?.translations || {}
-        const available = ['en', 'ja', 'zh'].filter(l => tr[l]?.extract)
-        const effective = (wikiLang && available.includes(wikiLang))
-          ? wikiLang
-          : available.includes(lang) ? lang : available[0] || null
-        const wikiData = effective ? tr[effective] : null
-        const LANG_LABELS = { en: 'EN', ja: '日本語', zh: '中文' }
+        const info = detail.company_info || {}
+        const hasError = info.error === 'no_credits'
+        const summary = (lang === 'ja' ? info.ja : null) || info.en || info.ja || ''
         return (
-          <Section icon="📖" title={t('jp_detail_wiki')}>
-            {available.length > 0 ? (
+          <Section icon="🏢" title={t('jp_detail_company_info')}>
+            {hasError ? (
+              <NoContent label={t('company_info_no_credits')} />
+            ) : summary ? (
               <div>
-                <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
-                  {['en', 'ja', 'zh'].map(l => {
-                    const on = effective === l
-                    const has = available.includes(l)
-                    return (
-                      <button key={l} onClick={() => has && setWikiLang(l)} style={{
-                        padding: '3px 10px', fontSize: 12, borderRadius: 4,
-                        border: `1px solid ${on ? 'var(--blue)' : 'var(--border)'}`,
-                        background: on ? 'var(--blue)' : 'var(--bg-surface)',
-                        color: on ? '#fff' : has ? 'var(--text-1)' : 'var(--text-3)',
-                        cursor: has ? 'pointer' : 'default', fontWeight: on ? 600 : 400,
-                      }}>
-                        {LANG_LABELS[l]}
-                      </button>
-                    )
-                  })}
+                <div style={{
+                  maxHeight: 300, overflowY: 'auto',
+                  fontSize: 13, lineHeight: 1.8, color: 'var(--text-1)',
+                  background: 'var(--bg-surface)', padding: '12px 16px',
+                  borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
+                  whiteSpace: 'pre-wrap',
+                }}>
+                  {summary}
                 </div>
-                {wikiData && (
-                  <>
-                    <div style={{
-                      maxHeight: 280, overflowY: 'auto',
-                      fontSize: 13, lineHeight: 1.75, color: 'var(--text-1)',
-                      background: 'var(--bg-surface)', padding: '12px 16px',
-                      borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
-                      whiteSpace: 'pre-wrap',
-                    }}>
-                      {wikiData.extract}
-                    </div>
-                    {wikiData.url && (
-                      <a href={wikiData.url} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8, display: 'inline-block' }}>
-                        {t('jp_wiki_read_more')}
-                      </a>
-                    )}
-                  </>
-                )}
+                <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 6 }}>
+                  {t('jp_company_info_credit')}
+                </div>
               </div>
             ) : (
               <NoContent label={t('jp_detail_no_content')} />

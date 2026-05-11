@@ -154,8 +154,10 @@ ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_url          TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_lang         TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_fetched_at   TIMESTAMPTZ;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS wiki_translations TEXT;
-ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_data        TEXT;
-ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_fetched_at  TIMESTAMPTZ;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_data             TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS fins_fetched_at       TIMESTAMPTZ;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info          TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info_fetched_at TIMESTAMPTZ;
 """
 
 
