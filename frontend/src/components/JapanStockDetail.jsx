@@ -1,11 +1,29 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport } from '../api/client'
 import { useLang } from '../context/LangContext'
+import katex from 'katex'
 
-// ── Minimal Markdown renderer ─────────────────────────────────────────────────
+// ── Minimal Markdown + KaTeX renderer ────────────────────────────────────────
+
+function KatexInline({ latex }) {
+  let html = ''
+  try { html = katex.renderToString(latex, { throwOnError: false, displayMode: false }) }
+  catch { html = latex }
+  return <span dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function KatexBlock({ latex }) {
+  let html = ''
+  try { html = katex.renderToString(latex, { throwOnError: false, displayMode: true }) }
+  catch { html = latex }
+  return (
+    <div style={{ overflowX: 'auto', padding: '10px 0', textAlign: 'center' }}
+      dangerouslySetInnerHTML={{ __html: html }} />
+  )
+}
 
 function InlineText({ text }) {
-  const parts = String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/)
+  const parts = String(text).split(/(\*\*[^*]+\*\*|`[^`]+`|\$[^$]+\$)/)
   return parts.map((p, i) => {
     if (p.startsWith('**') && p.endsWith('**'))
       return <strong key={i}>{p.slice(2, -2)}</strong>
@@ -17,6 +35,8 @@ function InlineText({ text }) {
           padding: '1px 5px', borderRadius: 3, color: 'var(--blue)',
         }}>{p.slice(1, -1)}</code>
       )
+    if (p.startsWith('$') && p.endsWith('$') && p.length > 2)
+      return <KatexInline key={i} latex={p.slice(1, -1)} />
     return <Fragment key={i}>{p}</Fragment>
   })
 }
@@ -26,6 +46,7 @@ function MarkdownReport({ text }) {
   const lines = text.split('\n')
   const els = []
   let listBuf = []
+  let mathBuf = null
 
   const flushList = () => {
     if (!listBuf.length) return
@@ -39,6 +60,26 @@ function MarkdownReport({ text }) {
 
   lines.forEach((raw, i) => {
     const line = raw.trimEnd()
+
+    if (line === '$$') {
+      if (mathBuf === null) {
+        flushList()
+        mathBuf = []
+      } else {
+        els.push(
+          <div key={`math-${i}`} style={{
+            background: 'var(--bg-surface)', border: '1px solid var(--border)',
+            borderRadius: 'var(--r-sm)', margin: '8px 0', padding: '4px 8px',
+          }}>
+            <KatexBlock latex={mathBuf.join('\\\\')} />
+          </div>
+        )
+        mathBuf = null
+      }
+      return
+    }
+    if (mathBuf !== null) { mathBuf.push(line); return }
+
     if (line === '---') {
       flushList()
       els.push(<hr key={i} style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '18px 0 14px' }} />)
@@ -54,17 +95,6 @@ function MarkdownReport({ text }) {
     } else if (line.startsWith('# ')) {
       flushList()
       els.push(<h1 key={i} style={{ fontSize: 17, fontWeight: 800, margin: '0 0 14px', color: 'var(--text-1)' }}><InlineText text={line.slice(2)} /></h1>)
-    } else if (line.startsWith('> ')) {
-      flushList()
-      els.push(
-        <div key={i} style={{
-          fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7,
-          background: 'var(--bg-surface)', border: '1px solid var(--border)',
-          borderLeft: '3px solid var(--blue)', borderRadius: '0 4px 4px 0',
-          padding: '6px 12px', margin: '4px 0', color: 'var(--blue)',
-          whiteSpace: 'pre-wrap',
-        }}>{line.slice(2)}</div>
-      )
     } else if (line.startsWith('- ') || line.startsWith('* ')) {
       listBuf.push(line.slice(2))
     } else if (line === '') {
@@ -175,7 +205,7 @@ function Section({ icon, title, headerRight, children }) {
 
 const STRAT_INFO_MD = `# Score Computation Reference
 
-All scores are normalized to **0 – 100**. They are recomputed each time "AQR Scores" is triggered. Short-period variants (3D, 5D) require full daily history and show **—** for stocks not yet individually viewed.
+All scores are normalized to **0 – 100** and recomputed each time "AQR Scores" is triggered. Short-period variants (3D, 5D) need full daily history and may show **—** for stocks not yet individually viewed.
 
 ---
 
@@ -183,140 +213,154 @@ All scores are normalized to **0 – 100**. They are recomputed each time "AQR S
 
 Captures whether a stock's own past return predicts continuation. The raw return is ranked against all other stocks to produce a percentile score.
 
-### TSMOM 6M (score_tsmom)
+### TSMOM 6M
 
-Computed from monthly end-of-day prices (7 snapshots, SQL).
+Computed from 7 monthly end-of-day price snapshots via SQL.
 
-> r_i = (P_i − P_{i-1}) / P_{i-1} × 100       (month-over-month return, i = 1…6)
+$$
+r_i = \\frac{P_i - P_{i-1}}{P_{i-1}} \\times 100 \\quad (i = 1 \\ldots 6)
+$$
 
-> score_raw = (r_1 + r_2 + r_3 + r_4 + r_5 + r_6) / 6
+$$
+\\bar{r} = \\frac{1}{6}\\sum_{i=1}^{6} r_i \\qquad \\text{score} = \\text{PERCENT\\_RANK}(\\bar{r}) \\times 100
+$$
 
-> score = PERCENT_RANK(score_raw) × 100          (across all stocks, SQL window fn)
+**Signal:** $\\text{score} > 50$ → Long trend &nbsp;|&nbsp; $\\text{score} < 50$ → Short trend
 
-**Signal:** score > 50 → Long trend  |  score < 50 → Short trend
-
-### TSMOM 1M / 5D / 3D (score_tsmom_1m / _5d / _3d)
+### TSMOM 1M / 5D / 3D
 
 Computed in Python from 90-day rolling daily prices.
 
-> Return(n) = (close[0] − close[−n]) / close[−n] × 100
+$$
+\\text{Return}(n) = \\frac{P_0 - P_{-n}}{P_{-n}} \\times 100 \\qquad \\text{score} = \\text{PERCENT\\_RANK}(\\text{Return}) \\times 100
+$$
 
-> score = PERCENT_RANK(Return(n)) × 100          (Python sort, 0-indexed)
-
-Where **n = 21** (1M ≈ 1 trading month), **n = 5** (5D), **n = 3** (3D).
+where $n = 21$ (1M), $n = 5$ (5D), $n = 3$ (3D).
 
 ---
 
 ## 2. RSI(2) — 2-Period Wilder RSI
 
-A mean-reversion oscillator. Wilder's EMA uses alpha = 1/n (here 1/2), giving more weight to recent moves than a simple average.
+Mean-reversion oscillator. Wilder's EMA uses $\\alpha = 1/n$ (here $1/2$).
 
-**Step 1 — price differences over the full 90-day window:**
-> d_t = P_t − P_{t-1}
+**Step 1 — price differences:**
+$$
+d_t = P_t - P_{t-1}
+$$
 
 **Step 2 — separate gains and losses:**
-> U_t = max(d_t, 0)    (up move)
-> D_t = max(−d_t, 0)   (down move)
+$$
+U_t = \\max(d_t,\\, 0) \\qquad D_t = \\max(-d_t,\\, 0)
+$$
 
-**Step 3 — seed on first 2 differences:**
-> avg_U₀ = (U_1 + U_2) / 2
-> avg_D₀ = (D_1 + D_2) / 2
+**Step 3 — Wilder seed on first 2 bars:**
+$$
+\\bar{U}_0 = \\frac{U_1 + U_2}{2} \\qquad \\bar{D}_0 = \\frac{D_1 + D_2}{2}
+$$
 
-**Step 4 — Wilder smoothing for each subsequent bar t ≥ 3:**
-> avg_U_t = (avg_U_{t-1} × (n−1) + U_t) / n      where n = 2
-> avg_D_t = (avg_D_{t-1} × (n−1) + D_t) / n
+**Step 4 — Wilder smoothing for each bar $t \\geq 3$ (with $n = 2$):**
+$$
+\\bar{U}_t = \\frac{\\bar{U}_{t-1} \\cdot (n-1) + U_t}{n} \\qquad \\bar{D}_t = \\frac{\\bar{D}_{t-1} \\cdot (n-1) + D_t}{n}
+$$
 
 **Step 5 — RSI:**
-> RS = avg_U / avg_D
-> RSI = 100 − 100 / (1 + RS)
+$$
+\\text{RSI} = 100 - \\frac{100}{1 + \\bar{U}/\\bar{D}}
+$$
 
-**Edge cases:** if avg_D = 0 → RSI = 100; if avg_U = 0 → RSI = 0.
+If $\\bar{D} = 0 \\Rightarrow \\text{RSI} = 100$; if $\\bar{U} = 0 \\Rightarrow \\text{RSI} = 0$.
 
-**Signal:** RSI < 15 → Oversold (buy)  |  RSI > 85 → Overbought (sell)  |  15–85 → Neutral
+**Signal:** $\\text{RSI} < 15$ → Oversold (buy) &nbsp;|&nbsp; $\\text{RSI} > 85$ → Overbought (sell) &nbsp;|&nbsp; otherwise Neutral
 
 ---
 
 ## 3. BB Squeeze — Bollinger Band Width Compression
 
-Detects periods when price volatility is unusually low (band squeeze), which historically precedes sharp breakouts. Score = 100 means the current band is the tightest it has been in 30 bars.
+Detects unusually low volatility (squeeze) that often precedes sharp breakouts. Score 100 = tightest band in 30 bars.
 
-**Step 1 — 3-bar rolling mean and standard deviation:**
-> SMA₃(t) = (P_t + P_{t-1} + P_{t-2}) / 3
-> STD₃(t) = sqrt( Σ(P_{t-k} − SMA₃)² / 3 )    for k = 0, 1, 2
+**Step 1 — 3-bar rolling SMA and standard deviation:**
+$$
+\\text{SMA}_3(t) = \\frac{P_t + P_{t-1} + P_{t-2}}{3}
+$$
+$$
+\\text{STD}_3(t) = \\sqrt{\\frac{\\sum_{k=0}^{2}\\bigl(P_{t-k} - \\text{SMA}_3\\bigr)^2}{3}}
+$$
 
-**Step 2 — bandwidth (scaled by SMA to be comparable across price levels):**
-> BW(t) = 4 × STD₃(t) / SMA₃(t) × 100
+**Step 2 — bandwidth (normalised by SMA so it is price-scale invariant):**
+$$
+\\text{BW}(t) = \\frac{4 \\times \\text{STD}_3(t)}{\\text{SMA}_3(t)} \\times 100
+$$
 
-**Step 3 — normalize over a 30-bar rolling window:**
-> BW_min = min(BW over last 30 bars)
-> BW_max = max(BW over last 30 bars)
-> score = (1 − (BW − BW_min) / (BW_max − BW_min)) × 100
+**Step 3 — min-max normalization over 30-bar rolling window:**
+$$
+\\text{score} = \\left(1 - \\frac{\\text{BW} - \\text{BW}_{\\min}}{\\text{BW}_{\\max} - \\text{BW}_{\\min}}\\right) \\times 100
+$$
 
-If BW_max = BW_min (flat volatility), score = 50. Requires at least 2 bars per window.
+If $\\text{BW}_{\\max} = \\text{BW}_{\\min}$ (flat volatility), score defaults to 50.
 
-**Signal:** score ≥ 75 → Squeeze (watch for breakout)  |  < 75 → Normal
+**Signal:** $\\text{score} \\geq 75$ → Squeeze (watch for breakout) &nbsp;|&nbsp; $< 75$ → Normal
 
 ---
 
 ## 4. Pair Trade — Sector Deviation Z-Score
 
-Compares each stock's return to its sector median. High score = outperforming peers; low = underperforming. Requires ≥ 5 stocks per sector.
+Compares each stock's return to its sector. High score = outperforming peers. Requires $\\geq 5$ stocks per sector.
 
-**Step 1 — compute sector statistics:**
-> μ_s = (1/N) Σ ret_i      (sector mean, N stocks in sector s)
-> σ_s = sqrt( Σ(ret_i − μ_s)² / (N−1) )   (sample std-dev)
+**Sector statistics:**
+$$
+\\mu_s = \\frac{1}{N}\\sum_{i \\in s} r_i \\qquad \\sigma_s = \\sqrt{\\frac{\\sum_{i \\in s}(r_i - \\mu_s)^2}{N - 1}}
+$$
 
-**Step 2 — z-score and linear mapping to [0, 100]:**
-> z_i = (ret_i − μ_s) / σ_s
-> score = clamp( (z_i + 3) / 6 × 100,  0,  100 )
+**Z-score mapped to [0, 100]:**
+$$
+z_i = \\frac{r_i - \\mu_s}{\\sigma_s} \\qquad \\text{score} = \\text{clamp}\\!\\left(\\frac{z_i + 3}{6} \\times 100,\\ 0,\\ 100\\right)
+$$
 
-This maps z = −3 → 0, z = 0 → 50, z = +3 → 100. Extreme outliers are clamped.
+This maps $z = -3 \\to 0$, $z = 0 \\to 50$, $z = +3 \\to 100$.
 
 **Data source per variant:**
-- **6M** — ret = 6-month mean monthly return (same as TSMOM 6M raw)
-- **1M** — ret from SQL monthly CTE: latest month-end (rank 1) vs prior (rank 2)
-- **5D** — ret from SQL monthly CTE: rank 1 vs rank 6 (≈5-month span)
-- **3D** — ret = (close[0] − close[−3]) / close[−3] × 100 (Python, daily prices)
+- **6M** — $r$ = 6-month mean monthly return (same raw value as TSMOM 6M)
+- **1M** — $r$ from SQL monthly CTE: latest month-end (rank 1) vs prior month (rank 2)
+- **5D** — $r$ from SQL monthly CTE: rank 1 vs rank 6 (≈ 5-month span)
+- **3D** — $r = (P_0 - P_{-3}) / P_{-3} \\times 100$ (Python, daily prices)
 
-**Signal:** score > 70 → Outperforming sector  |  score < 30 → Underperforming  |  30–70 → In-line
+**Signal:** $\\text{score} > 70$ → Outperforming &nbsp;|&nbsp; $\\text{score} < 30$ → Underperforming &nbsp;|&nbsp; 30–70 → In-line
 
 ---
 
 ## 5. CS Momentum — Cross-Sectional, Skip-1-Period
 
-Cross-sectional momentum skips the most recent period to avoid the short-term reversal effect (bid-ask bounce). It then measures return over the next 3 older periods. Score = percentile rank.
+Skips the most recent period (avoids bid-ask reversal), then measures return over 3 prior periods.
 
-**General skip-1, measure-3 formula (period = n trading days):**
-> ret = (close[−(n+1)] − close[−(4n+1)]) / close[−(4n+1)] × 100
+**General formula** (period = $n$ trading days):
+$$
+r = \\frac{P_{-(n+1)} - P_{-(4n+1)}}{P_{-(4n+1)}} \\times 100 \\qquad \\text{score} = \\text{PERCENT\\_RANK}(r) \\times 100
+$$
 
-The index −(n+1) skips 1 period; −(4n+1) goes back 1 skip + 3 measurement periods.
+Index $-(n+1)$ skips 1 period; $-(4n+1)$ is 1 skip + 3 measurement periods further back.
 
-**CS Mom 1M (score_cs_mom_1m) — SQL monthly CTE:**
-> ret = (P_{month-rank-2} − P_{month-rank-5}) / P_{month-rank-5} × 100
+**CS Mom 1M** — SQL monthly CTE, skip month 1, measure months 2→5:
+$$
+r = \\frac{P_{\\text{month2}} - P_{\\text{month5}}}{P_{\\text{month5}}} \\times 100
+$$
 
-Skips the most recent month (rank 1), measures 3-month return from rank 2 to rank 5.
+**CS Mom 5D** — Python daily prices, needs 21 bars:
+$$
+r = \\frac{P_{-6} - P_{-21}}{P_{-21}} \\times 100
+$$
 
-> score = PERCENT_RANK(ret) × 100    (SQL window function across all stocks)
+**CS Mom 3D** — Python daily prices, needs 13 bars:
+$$
+r = \\frac{P_{-4} - P_{-13}}{P_{-13}} \\times 100
+$$
 
-**CS Mom 5D (score_cs_mom_5d) — Python, daily prices:**
-> ret = (close[−6] − close[−21]) / close[−21] × 100
-
-Skip 5 days (index −6), look back 3×5 = 15 more days (index −21). Requires **21 daily bars**.
-
-**CS Mom 3D (score_cs_mom_3d) — Python, daily prices:**
-> ret = (close[−4] − close[−13]) / close[−13] × 100
-
-Skip 3 days (index −4), look back 3×3 = 9 more days (index −13). Requires **13 daily bars**.
-
-> score = PERCENT_RANK(ret) × 100    (Python sort across all scored stocks)
-
-**Signal:** score > 70 → Top quartile  |  score < 30 → Bottom quartile  |  30–70 → Middle
+**Signal:** $\\text{score} > 70$ → Top quartile &nbsp;|&nbsp; $\\text{score} < 30$ → Bottom quartile &nbsp;|&nbsp; 30–70 → Middle
 
 ---
 
 #### Data & Coverage
 
-Daily prices are fetched from **JQuants API** and stored in \`jp_daily_prices\`. The batch refresh stores only ~7 month-end snapshots per stock. Full daily history is added when a stock's detail page is opened, which is required for the 3D/5D Python variants. Sector codes follow the **33-sector TSE classification** from JQuants /equities/master (field S33Nm).
+Prices from **JQuants API**, stored in \`jp_daily_prices\`. Batch refresh saves ~7 month-end snapshots per stock; full daily history is fetched when a detail page is opened (required for 3D/5D variants). Sector codes: **TSE 33-sector classification** via JQuants /equities/master field S33Nm.
 `
 
 function StrategyInfoModal({ onClose }) {
