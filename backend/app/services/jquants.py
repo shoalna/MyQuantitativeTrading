@@ -562,31 +562,31 @@ async def compute_aqr_scores(pool) -> int:
             ORDER BY code, date
         """)
 
-        # 3. BB Squeeze intensity — requires 15+ consecutive daily prices
+        # 3. BB Squeeze intensity — 3-day SMA/std, normalized over 30-day min/max
         # STDDEV returns double precision; cast bandwidth chain to numeric
         bb_rows = await conn.fetch("""
             WITH bb AS (
                 SELECT code, date,
-                       AVG(close) OVER w           AS sma20,
-                       STDDEV(close) OVER w        AS std20,
+                       AVG(close) OVER w           AS sma3,
+                       STDDEV(close) OVER w        AS std3,
                        COUNT(close) OVER w          AS cnt
                 FROM jp_daily_prices
-                WHERE date >= CURRENT_DATE - INTERVAL '200 days' AND close IS NOT NULL
-                WINDOW w AS (PARTITION BY code ORDER BY date ROWS 19 PRECEDING)
+                WHERE date >= CURRENT_DATE - INTERVAL '60 days' AND close IS NOT NULL
+                WINDOW w AS (PARTITION BY code ORDER BY date ROWS 2 PRECEDING)
             ),
             bw AS (
                 SELECT code, date,
-                       CASE WHEN sma20 > 0 AND cnt >= 15
-                            THEN (4.0 * std20 / sma20 * 100)::numeric
+                       CASE WHEN sma3 > 0 AND cnt >= 2
+                            THEN (4.0 * std3 / sma3 * 100)::numeric
                             ELSE NULL END AS bandwidth
                 FROM bb
             ),
             hist AS (
                 SELECT code, date, bandwidth,
                        MIN(bandwidth) OVER (PARTITION BY code ORDER BY date
-                                            ROWS 119 PRECEDING) AS min_bw,
+                                            ROWS 29 PRECEDING) AS min_bw,
                        MAX(bandwidth) OVER (PARTITION BY code ORDER BY date
-                                            ROWS 119 PRECEDING) AS max_bw,
+                                            ROWS 29 PRECEDING) AS max_bw,
                        ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
                 FROM bw WHERE bandwidth IS NOT NULL
             )
