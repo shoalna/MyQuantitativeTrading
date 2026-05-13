@@ -166,6 +166,9 @@ ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_3d  NUMERIC(5,
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_3d   NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_5d   NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_1m   NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_cs_mom_3d NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_cs_mom_5d NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_cs_mom_1m NUMERIC(5,1);
 """
 
 

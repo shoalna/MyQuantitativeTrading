@@ -64,6 +64,9 @@ _SORT_MAP = {
     "score_pair_3d":      "s.score_pair_3d",
     "score_pair_5d":      "s.score_pair_5d",
     "score_pair_1m":      "s.score_pair_1m",
+    "score_cs_mom_3d":    "s.score_cs_mom_3d",
+    "score_cs_mom_5d":    "s.score_cs_mom_5d",
+    "score_cs_mom_1m":    "s.score_cs_mom_1m",
 }
 
 
@@ -306,6 +309,7 @@ async def list_stocks(
                    s.score_tsmom, s.score_rsi2, s.score_bb, s.score_pair, s.score_cs_mom,
                    s.score_tsmom_1m, s.score_tsmom_5d, s.score_tsmom_3d,
                    s.score_pair_3d, s.score_pair_5d, s.score_pair_1m,
+                   s.score_cs_mom_3d, s.score_cs_mom_5d, s.score_cs_mom_1m,
                    s.updated_at AS price_updated_at
             FROM jp_listings l
             LEFT JOIN jp_stock_summary s ON l.code = s.code

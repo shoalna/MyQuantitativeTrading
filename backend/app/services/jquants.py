@@ -481,6 +481,17 @@ async def refresh_prices(
     return len(records)
 
 
+def _cs_mom_return(closes: list[float], period: int) -> float | None:
+    """CS Momentum return: skip 1 period, then measure 3 periods back."""
+    needed = 4 * period + 1
+    if len(closes) < needed:
+        return None
+    ref = closes[-(4 * period + 1)]
+    if ref == 0:
+        return None
+    return (closes[-(period + 1)] - ref) / ref * 100
+
+
 def _tsmom_return(closes: list[float], n: int) -> float | None:
     """Return the n-period price return in % (latest vs n bars ago), or None."""
     if len(closes) < n + 1:
@@ -652,8 +663,8 @@ async def compute_aqr_scores(pool) -> int:
             WHERE s.change_6m IS NOT NULL
         """)
 
-        # 5. CS Momentum — 3m return skipping the most recent month, percentile rank
-        cs_mom_rows = await conn.fetch("""
+        # 5. CS Momentum 1M — 3m return skipping the most recent month, percentile rank
+        cs_mom_1m_rows = await conn.fetch("""
             WITH monthly AS (
                 SELECT code,
                        DATE_TRUNC('month', date) AS month,
@@ -830,10 +841,21 @@ async def compute_aqr_scores(pool) -> int:
         if (v := _tsmom_return(closes, 3)) is not None
     })
 
-    bb_map     = {r["code"]: float(r["bb_score"]) for r in bb_rows}
-    pair_map   = {r["code"]: float(r["score"])    for r in pair_rows}
-    cs_mom_map = {r["code"]: float(r["score"])    for r in cs_mom_rows}
-    vol_map    = {r["code"]: float(r["vol_pct"])  for r in vol_rows}
+    bb_map        = {r["code"]: float(r["bb_score"]) for r in bb_rows}
+    pair_map      = {r["code"]: float(r["score"])    for r in pair_rows}
+    cs_mom_1m_map = {r["code"]: float(r["score"])    for r in cs_mom_1m_rows}
+    vol_map       = {r["code"]: float(r["vol_pct"])  for r in vol_rows}
+
+    cs_mom_3d_map = _percentile_rank({
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _cs_mom_return(closes, 3)) is not None
+    })
+    cs_mom_5d_map = _percentile_rank({
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _cs_mom_return(closes, 5)) is not None
+    })
 
     sectors = {r["code"]: r["sector"] for r in sector_rows}
     pair_3d_map = _pair_zscore(
@@ -861,13 +883,16 @@ async def compute_aqr_scores(pool) -> int:
             rsi2_map.get(code),
             bb_map.get(code),
             pair_map.get(code),
-            cs_mom_map.get(code),
+            cs_mom_1m_map.get(code),
             tsmom_1m_map.get(code),
             tsmom_5d_map.get(code),
             tsmom_3d_map.get(code),
             pair_3d_map.get(code),
             pair_5d_map.get(code),
             pair_1m_map.get(code),
+            cs_mom_3d_map.get(code),
+            cs_mom_5d_map.get(code),
+            cs_mom_1m_map.get(code),
             code,
         ))
 
@@ -880,8 +905,9 @@ async def compute_aqr_scores(pool) -> int:
                     score_tsmom = $4, score_rsi2 = $5, score_bb   = $6,
                     score_pair  = $7, score_cs_mom = $8,
                     score_tsmom_1m = $9, score_tsmom_5d = $10, score_tsmom_3d = $11,
-                    score_pair_3d  = $12, score_pair_5d = $13, score_pair_1m  = $14
-                WHERE code = $15
+                    score_pair_3d  = $12, score_pair_5d = $13, score_pair_1m  = $14,
+                    score_cs_mom_3d = $15, score_cs_mom_5d = $16, score_cs_mom_1m = $17
+                WHERE code = $18
                 """,
                 records,
             )
@@ -1225,7 +1251,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at,
                       score_tsmom, score_rsi2, score_bb, score_pair, score_cs_mom,
                       score_tsmom_1m, score_tsmom_5d, score_tsmom_3d,
-                      score_pair_3d, score_pair_5d, score_pair_1m
+                      score_pair_3d, score_pair_5d, score_pair_1m,
+                      score_cs_mom_3d, score_cs_mom_5d, score_cs_mom_1m
                FROM jp_stock_summary WHERE code = $1""",
             code,
         )
@@ -1314,6 +1341,9 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             "pair_1m":  float(summary["score_pair_1m"])  if summary and summary["score_pair_1m"]  is not None else None,
             "pair_5d":  float(summary["score_pair_5d"])  if summary and summary["score_pair_5d"]  is not None else None,
             "pair_3d":  float(summary["score_pair_3d"])  if summary and summary["score_pair_3d"]  is not None else None,
-            "cs_mom":   float(summary["score_cs_mom"])   if summary and summary["score_cs_mom"]   is not None else None,
+            "cs_mom":     float(summary["score_cs_mom"])     if summary and summary["score_cs_mom"]     is not None else None,
+            "cs_mom_3d":  float(summary["score_cs_mom_3d"])  if summary and summary["score_cs_mom_3d"]  is not None else None,
+            "cs_mom_5d":  float(summary["score_cs_mom_5d"])  if summary and summary["score_cs_mom_5d"]  is not None else None,
+            "cs_mom_1m":  float(summary["score_cs_mom_1m"])  if summary and summary["score_cs_mom_1m"]  is not None else None,
         } if summary else None,
     }
