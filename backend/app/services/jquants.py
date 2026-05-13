@@ -2,6 +2,7 @@ import asyncio
 import calendar
 import json
 import logging
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Callable, Optional
 
@@ -480,12 +481,41 @@ async def refresh_prices(
     return len(records)
 
 
+def _rsi_wilder(closes: list[float], n: int = 2) -> float | None:
+    """
+    RSI(n) using Wilder's EMA smoothing.
+
+    Seed  : simple average of the first n up/down moves.
+    Update: avg = (prev_avg * (n-1) + current) / n   (alpha = 1/n).
+
+    Requires at least n+1 closes (= n price differences).
+    """
+    if len(closes) < n + 1:
+        return None
+    diffs  = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains  = [max(d, 0.0) for d in diffs]
+    losses = [max(-d, 0.0) for d in diffs]
+
+    avg_gain = sum(gains[:n]) / n
+    avg_loss = sum(losses[:n]) / n
+
+    for g, l in zip(gains[n:], losses[n:]):
+        avg_gain = (avg_gain * (n - 1) + g) / n
+        avg_loss = (avg_loss * (n - 1) + l) / n
+
+    if avg_loss == 0:
+        return 100.0
+    if avg_gain == 0:
+        return 0.0
+    return round(100.0 - 100.0 / (1.0 + avg_gain / avg_loss), 1)
+
+
 async def compute_aqr_scores(pool) -> int:
     """
     Compute all 5 strategy scores for every stock (guide_search.md §7):
 
     1. TSMOM   (score_tsmom):  Percentile rank of 6-month return. >50=long, <50=short.
-    2. RSI(2)  (score_rsi2):   2-period RSI from recent closes. <15=oversold, >85=overbought.
+    2. RSI(2)  (score_rsi2):   2-period RSI using Wilder's EMA. <15=oversold, >85=overbought.
     3. BB Squeeze (score_bb):  Band-width compression 0–100. 100=maximum squeeze.
     4. Pair    (score_pair):   Sector deviation z-score → 0–100. >50=outperforming sector.
     5. CS Mom  (score_cs_mom): Percentile rank of 3-month return (skip last 1m). >50=top.
@@ -501,29 +531,13 @@ async def compute_aqr_scores(pool) -> int:
             FROM jp_stock_summary WHERE change_6m IS NOT NULL
         """)
 
-        # 2. RSI(2) — from whatever daily closes we have in the last 90 days
-        #    (month-end snapshots give ~2–3 points; viewed stocks have full daily data)
-        rsi2_rows = await conn.fetch("""
-            WITH diffs AS (
-                SELECT code,
-                       close - LAG(close) OVER (PARTITION BY code ORDER BY date) AS diff
-                FROM jp_daily_prices
-                WHERE date >= CURRENT_DATE - INTERVAL '90 days' AND close IS NOT NULL
-            ),
-            agg AS (
-                SELECT code,
-                       AVG(CASE WHEN diff > 0 THEN diff ELSE 0   END) AS avg_gain,
-                       AVG(CASE WHEN diff < 0 THEN ABS(diff) ELSE 0 END) AS avg_loss
-                FROM diffs WHERE diff IS NOT NULL
-                GROUP BY code HAVING COUNT(*) >= 2
-            )
-            SELECT code,
-                   ROUND((
-                       CASE WHEN avg_loss = 0 THEN 100.0
-                            WHEN avg_gain = 0 THEN   0.0
-                            ELSE 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
-                       END)::numeric, 1) AS rsi2
-            FROM agg
+        # 2. RSI(2) — Wilder's EMA smoothing computed in Python
+        #    Fetch ordered closes; seed on first 2 diffs, then smooth with alpha=0.5.
+        rsi2_price_rows = await conn.fetch("""
+            SELECT code, close
+            FROM jp_daily_prices
+            WHERE date >= CURRENT_DATE - INTERVAL '90 days' AND close IS NOT NULL
+            ORDER BY code, date
         """)
 
         # 3. BB Squeeze intensity — requires 15+ consecutive daily prices
@@ -651,7 +665,15 @@ async def compute_aqr_scores(pool) -> int:
         """)
 
     tsmom_map  = {r["code"]: float(r["score"])    for r in tsmom_rows}
-    rsi2_map   = {r["code"]: float(r["rsi2"])     for r in rsi2_rows}
+
+    code_closes: dict[str, list[float]] = defaultdict(list)
+    for r in rsi2_price_rows:
+        code_closes[r["code"]].append(float(r["close"]))
+    rsi2_map = {
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _rsi_wilder(closes)) is not None
+    }
     bb_map     = {r["code"]: float(r["bb_score"]) for r in bb_rows}
     pair_map   = {r["code"]: float(r["score"])    for r in pair_rows}
     cs_mom_map = {r["code"]: float(r["score"])    for r in cs_mom_rows}
