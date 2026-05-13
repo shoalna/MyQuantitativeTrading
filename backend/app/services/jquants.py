@@ -481,6 +481,28 @@ async def refresh_prices(
     return len(records)
 
 
+def _tsmom_return(closes: list[float], n: int) -> float | None:
+    """Return the n-period price return in % (latest vs n bars ago), or None."""
+    if len(closes) < n + 1:
+        return None
+    ref = closes[-(n + 1)]
+    if ref == 0:
+        return None
+    return (closes[-1] - ref) / ref * 100
+
+
+def _percentile_rank(d: dict[str, float]) -> dict[str, float]:
+    """Convert a dict of raw values to PERCENT_RANK()-equivalent scores (0–100)."""
+    if not d:
+        return {}
+    items = sorted(d.items(), key=lambda x: x[1])
+    n = len(items)
+    return {
+        code: round(i / (n - 1) * 100, 1) if n > 1 else 50.0
+        for i, (code, _) in enumerate(items)
+    }
+
+
 def _rsi_wilder(closes: list[float], n: int = 2) -> float | None:
     """
     RSI(n) using Wilder's EMA smoothing.
@@ -674,6 +696,23 @@ async def compute_aqr_scores(pool) -> int:
         for code, closes in code_closes.items()
         if (v := _rsi_wilder(closes)) is not None
     }
+
+    tsmom_1m_map = _percentile_rank({
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _tsmom_return(closes, 21)) is not None
+    })
+    tsmom_5d_map = _percentile_rank({
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _tsmom_return(closes, 5)) is not None
+    })
+    tsmom_3d_map = _percentile_rank({
+        code: v
+        for code, closes in code_closes.items()
+        if (v := _tsmom_return(closes, 3)) is not None
+    })
+
     bb_map     = {r["code"]: float(r["bb_score"]) for r in bb_rows}
     pair_map   = {r["code"]: float(r["score"])    for r in pair_rows}
     cs_mom_map = {r["code"]: float(r["score"])    for r in cs_mom_rows}
@@ -698,6 +737,9 @@ async def compute_aqr_scores(pool) -> int:
             bb_map.get(code),
             pair_map.get(code),
             cs_mom_map.get(code),
+            tsmom_1m_map.get(code),
+            tsmom_5d_map.get(code),
+            tsmom_3d_map.get(code),
             code,
         ))
 
@@ -708,8 +750,9 @@ async def compute_aqr_scores(pool) -> int:
                 UPDATE jp_stock_summary
                 SET aqr_score   = $1, aqr_mom    = $2, aqr_vol    = $3,
                     score_tsmom = $4, score_rsi2 = $5, score_bb   = $6,
-                    score_pair  = $7, score_cs_mom = $8
-                WHERE code = $9
+                    score_pair  = $7, score_cs_mom = $8,
+                    score_tsmom_1m = $9, score_tsmom_5d = $10, score_tsmom_3d = $11
+                WHERE code = $12
                 """,
                 records,
             )
@@ -1051,7 +1094,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         )
         summary = await conn.fetchrow(
             """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at,
-                      score_tsmom, score_rsi2, score_bb, score_pair, score_cs_mom
+                      score_tsmom, score_rsi2, score_bb, score_pair, score_cs_mom,
+                      score_tsmom_1m, score_tsmom_5d, score_tsmom_3d
                FROM jp_stock_summary WHERE code = $1""",
             code,
         )
@@ -1130,10 +1174,13 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         "youtube_report":  youtube_report,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
         "scores": {
-            "tsmom":  float(summary["score_tsmom"])   if summary and summary["score_tsmom"]   is not None else None,
-            "rsi2":   float(summary["score_rsi2"])    if summary and summary["score_rsi2"]    is not None else None,
-            "bb":     float(summary["score_bb"])      if summary and summary["score_bb"]      is not None else None,
-            "pair":   float(summary["score_pair"])    if summary and summary["score_pair"]    is not None else None,
-            "cs_mom": float(summary["score_cs_mom"])  if summary and summary["score_cs_mom"]  is not None else None,
+            "tsmom":    float(summary["score_tsmom"])    if summary and summary["score_tsmom"]    is not None else None,
+            "tsmom_1m": float(summary["score_tsmom_1m"]) if summary and summary["score_tsmom_1m"] is not None else None,
+            "tsmom_5d": float(summary["score_tsmom_5d"]) if summary and summary["score_tsmom_5d"] is not None else None,
+            "tsmom_3d": float(summary["score_tsmom_3d"]) if summary and summary["score_tsmom_3d"] is not None else None,
+            "rsi2":     float(summary["score_rsi2"])     if summary and summary["score_rsi2"]     is not None else None,
+            "bb":       float(summary["score_bb"])       if summary and summary["score_bb"]       is not None else None,
+            "pair":     float(summary["score_pair"])     if summary and summary["score_pair"]     is not None else None,
+            "cs_mom":   float(summary["score_cs_mom"])   if summary and summary["score_cs_mom"]   is not None else None,
         } if summary else None,
     }

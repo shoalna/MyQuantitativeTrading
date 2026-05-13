@@ -160,6 +160,9 @@ ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info          TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info_fetched_at TIMESTAMPTZ;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_report         TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_fetched_at     TIMESTAMPTZ;
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_1m  NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_5d  NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_3d  NUMERIC(5,1);
 """
 
 
