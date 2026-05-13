@@ -454,7 +454,7 @@ export default function JapanStocks({ onSelectStock }) {
     { col: 'score_tsmom_3d',   label: t('jp_col_tsmom_3d'),   width: '70px',  right: true },
     { col: 'score_rsi2',      label: t('jp_col_rsi2'),       width: '68px',  right: true },
     { col: 'score_bb',        label: t('jp_col_bb'),         width: '60px',  right: true },
-    { col: 'score_pair',      label: t('jp_col_pair'),       width: '60px',  right: true },
+    { col: 'score_pair_3d',   label: t('jp_col_pair_3d'),    width: '60px',  right: true },
     { col: 'score_cs_mom',    label: t('jp_col_cs_mom'),     width: '72px',  right: true },
     { col: 'price_updated_at',label: t('jp_col_updated'),    width: '120px' },
   ]
@@ -711,7 +711,7 @@ export default function JapanStocks({ onSelectStock }) {
                     <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_tsmom_3d)}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_rsi2, true)}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_bb, false, bbColor)}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_pair)}</td>
+                    <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_pair_3d)}</td>
                     <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{scoreCell(stock.score_cs_mom)}</td>
 
                     {/* Updated */}
