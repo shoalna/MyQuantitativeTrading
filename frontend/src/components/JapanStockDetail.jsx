@@ -707,49 +707,104 @@ function StrategySignal({ stratKey, score, t }) {
   return <span style={{ color, fontSize: 12, fontWeight: 500 }}>{label}</span>
 }
 
-const STRATEGIES = [
-  { key: 'tsmom',    nameKey: 'strat_tsmom_6m', typeKey: 'strat_tsmom_type', holdKey: 'strat_tsmom_hold', marketKey: 'strat_tsmom_market', riskKey: 'strat_tsmom_risk' },
-  { key: 'tsmom_1m', nameKey: 'strat_tsmom_1m', typeKey: 'strat_tsmom_type', holdKey: 'strat_tsmom_hold', marketKey: 'strat_tsmom_market', riskKey: 'strat_tsmom_risk' },
-  { key: 'tsmom_5d', nameKey: 'strat_tsmom_5d', typeKey: 'strat_tsmom_type', holdKey: 'strat_tsmom_hold', marketKey: 'strat_tsmom_market', riskKey: 'strat_tsmom_risk' },
-  { key: 'tsmom_3d', nameKey: 'strat_tsmom_3d', typeKey: 'strat_tsmom_type', holdKey: 'strat_tsmom_hold', marketKey: 'strat_tsmom_market', riskKey: 'strat_tsmom_risk' },
-  { key: 'rsi2',     nameKey: 'strat_rsi2',     typeKey: 'strat_rsi2_type',   holdKey: 'strat_rsi2_hold',   marketKey: 'strat_rsi2_market',   riskKey: 'strat_rsi2_risk'   },
-  { key: 'bb',       nameKey: 'strat_bb',       typeKey: 'strat_bb_type',     holdKey: 'strat_bb_hold',     marketKey: 'strat_bb_market',     riskKey: 'strat_bb_risk'     },
-  { key: 'pair',     nameKey: 'strat_pair_6m',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
-  { key: 'pair_1m',  nameKey: 'strat_pair_1m',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
-  { key: 'pair_5d',  nameKey: 'strat_pair_5d',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
-  { key: 'pair_3d',  nameKey: 'strat_pair_3d',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
-  { key: 'cs_mom_1m', nameKey: 'strat_cs_mom_1m', typeKey: 'strat_cs_mom_type', holdKey: 'strat_cs_mom_hold', marketKey: 'strat_cs_mom_market', riskKey: 'strat_cs_mom_risk' },
-  { key: 'cs_mom_5d', nameKey: 'strat_cs_mom_5d', typeKey: 'strat_cs_mom_type', holdKey: 'strat_cs_mom_hold', marketKey: 'strat_cs_mom_market', riskKey: 'strat_cs_mom_risk' },
-  { key: 'cs_mom_3d', nameKey: 'strat_cs_mom_3d', typeKey: 'strat_cs_mom_type', holdKey: 'strat_cs_mom_hold', marketKey: 'strat_cs_mom_market', riskKey: 'strat_cs_mom_risk' },
+const _RSI = { key: 'rsi2',  nameKey: 'strat_rsi2', typeKey: 'strat_rsi2_type', holdKey: 'strat_rsi2_hold', marketKey: 'strat_rsi2_market', riskKey: 'strat_rsi2_risk' }
+const _BB  = { key: 'bb',    nameKey: 'strat_bb',   typeKey: 'strat_bb_type',   holdKey: 'strat_bb_hold',   marketKey: 'strat_bb_market',   riskKey: 'strat_bb_risk'   }
+
+const STRATEGY_GROUPS = [
+  {
+    period: '3D',
+    strategies: [
+      { key: 'tsmom_3d',  nameKey: 'strat_tsmom_3d',  typeKey: 'strat_tsmom_type',   holdKey: 'strat_tsmom_hold',   marketKey: 'strat_tsmom_market',   riskKey: 'strat_tsmom_risk'   },
+      _RSI,
+      _BB,
+      { key: 'pair_3d',   nameKey: 'strat_pair_3d',   typeKey: 'strat_pair_type',    holdKey: 'strat_pair_hold',    marketKey: 'strat_pair_market',    riskKey: 'strat_pair_risk'    },
+      { key: 'cs_mom_3d', nameKey: 'strat_cs_mom_3d', typeKey: 'strat_cs_mom_type',  holdKey: 'strat_cs_mom_hold',  marketKey: 'strat_cs_mom_market',  riskKey: 'strat_cs_mom_risk'  },
+    ],
+  },
+  {
+    period: '5D',
+    strategies: [
+      { key: 'tsmom_5d',  nameKey: 'strat_tsmom_5d',  typeKey: 'strat_tsmom_type',   holdKey: 'strat_tsmom_hold',   marketKey: 'strat_tsmom_market',   riskKey: 'strat_tsmom_risk'   },
+      _RSI,
+      _BB,
+      { key: 'pair_5d',   nameKey: 'strat_pair_5d',   typeKey: 'strat_pair_type',    holdKey: 'strat_pair_hold',    marketKey: 'strat_pair_market',    riskKey: 'strat_pair_risk'    },
+      { key: 'cs_mom_5d', nameKey: 'strat_cs_mom_5d', typeKey: 'strat_cs_mom_type',  holdKey: 'strat_cs_mom_hold',  marketKey: 'strat_cs_mom_market',  riskKey: 'strat_cs_mom_risk'  },
+    ],
+  },
+  {
+    period: '1M',
+    strategies: [
+      { key: 'tsmom_1m',  nameKey: 'strat_tsmom_1m',  typeKey: 'strat_tsmom_type',   holdKey: 'strat_tsmom_hold',   marketKey: 'strat_tsmom_market',   riskKey: 'strat_tsmom_risk'   },
+      _RSI,
+      _BB,
+      { key: 'pair_1m',   nameKey: 'strat_pair_1m',   typeKey: 'strat_pair_type',    holdKey: 'strat_pair_hold',    marketKey: 'strat_pair_market',    riskKey: 'strat_pair_risk'    },
+      { key: 'cs_mom_1m', nameKey: 'strat_cs_mom_1m', typeKey: 'strat_cs_mom_type',  holdKey: 'strat_cs_mom_hold',  marketKey: 'strat_cs_mom_market',  riskKey: 'strat_cs_mom_risk'  },
+    ],
+  },
+  {
+    period: '6M',
+    strategies: [
+      { key: 'tsmom',  nameKey: 'strat_tsmom_6m',  typeKey: 'strat_tsmom_type',  holdKey: 'strat_tsmom_hold',  marketKey: 'strat_tsmom_market',  riskKey: 'strat_tsmom_risk'  },
+      _RSI,
+      _BB,
+      { key: 'pair',   nameKey: 'strat_pair_6m',   typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+    ],
+  },
 ]
 
 function StrategyTable({ scores, t }) {
+  const [activePeriod, setActivePeriod] = useState('3D')
+  const group = STRATEGY_GROUPS.find(g => g.period === activePeriod)
+
   const thStyle = {
     padding: '8px 12px', fontSize: 11, fontWeight: 500,
     color: 'var(--text-2)', textAlign: 'left', whiteSpace: 'nowrap',
     borderBottom: '1px solid var(--border)', background: 'var(--bg-card)',
   }
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th style={thStyle}>{'Strategy'}</th>
-            <th style={{ ...thStyle, width: 180 }}>{t('strat_col_score')}</th>
-            <th style={thStyle}>{t('strat_col_signal')}</th>
-            <th style={thStyle}>{t('strat_col_type')}</th>
-            <th style={thStyle}>{t('strat_col_hold')}</th>
-            <th style={thStyle}>{t('strat_col_market')}</th>
-            <th style={{ ...thStyle, color: 'var(--red)' }}>{t('strat_col_risk')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {STRATEGIES.map(({ key, nameKey, typeKey, holdKey, marketKey, riskKey }) => {
+    <div>
+      {/* Period tabs */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 14, borderBottom: '2px solid var(--border)' }}>
+        {STRATEGY_GROUPS.map(({ period }) => {
+          const active = period === activePeriod
+          return (
+            <button
+              key={period}
+              onClick={() => setActivePeriod(period)}
+              style={{
+                padding: '6px 18px', fontSize: 13, fontWeight: 600,
+                background: 'none', border: 'none', cursor: 'pointer',
+                borderBottom: active ? '2px solid var(--blue)' : '2px solid transparent',
+                color: active ? 'var(--blue)' : 'var(--text-2)',
+                marginBottom: '-2px', transition: 'color 0.15s',
+              }}
+            >{period}</button>
+          )
+        })}
+      </div>
+
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={thStyle}>{'Strategy'}</th>
+              <th style={{ ...thStyle, width: 180 }}>{t('strat_col_score')}</th>
+              <th style={thStyle}>{t('strat_col_signal')}</th>
+              <th style={thStyle}>{t('strat_col_type')}</th>
+              <th style={thStyle}>{t('strat_col_hold')}</th>
+              <th style={thStyle}>{t('strat_col_market')}</th>
+              <th style={{ ...thStyle, color: 'var(--red)' }}>{t('strat_col_risk')}</th>
+            </tr>
+          </thead>
+          <tbody>
+          {group.strategies.map(({ key, nameKey, typeKey, holdKey, marketKey, riskKey }) => {
             const score = scores?.[key] ?? null
+            const isShared = key === 'rsi2' || key === 'bb'
             return (
-              <tr key={key} style={{ borderBottom: '1px solid var(--border)' }}>
+              <tr key={key} style={{ borderBottom: '1px solid var(--border)', background: isShared ? 'var(--bg-surface)' : 'transparent' }}>
                 <td style={{ padding: '10px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>
                   {t(nameKey)}
+                  {isShared && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-3)', fontWeight: 400 }}>all periods</span>}
                 </td>
                 <td style={{ padding: '10px 12px', minWidth: 160 }}>
                   <ScoreBar value={score} />
@@ -775,6 +830,7 @@ function StrategyTable({ scores, t }) {
         </tbody>
       </table>
     </div>
+  </div>
   )
 }
 
