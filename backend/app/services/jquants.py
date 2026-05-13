@@ -503,6 +503,38 @@ def _percentile_rank(d: dict[str, float]) -> dict[str, float]:
     }
 
 
+def _pair_zscore(returns: dict[str, float], sectors: dict[str, str]) -> dict[str, float]:
+    """
+    Sector-deviation z-score mapped to 0–100 (same formula as the SQL pair query).
+    Requires >= 5 stocks per sector to compute stats.
+    """
+    sector_rets: dict[str, list[float]] = defaultdict(list)
+    for code, ret in returns.items():
+        sec = sectors.get(code, "")
+        if sec and sec not in ("", "その他"):
+            sector_rets[sec].append(ret)
+
+    sector_stats: dict[str, tuple[float, float]] = {}
+    for sec, rets in sector_rets.items():
+        if len(rets) < 5:
+            continue
+        n = len(rets)
+        mean = sum(rets) / n
+        std = (sum((r - mean) ** 2 for r in rets) / (n - 1)) ** 0.5 if n > 1 else 0.0
+        if std > 0:
+            sector_stats[sec] = (mean, std)
+
+    result: dict[str, float] = {}
+    for code, ret in returns.items():
+        sec = sectors.get(code, "")
+        if sec not in sector_stats:
+            continue
+        mean, std = sector_stats[sec]
+        z = (ret - mean) / std
+        result[code] = round(min(100.0, max(0.0, (z + 3.0) / 6.0 * 100.0)), 1)
+    return result
+
+
 def _rsi_wilder(closes: list[float], n: int = 2) -> float | None:
     """
     RSI(n) using Wilder's EMA smoothing.
@@ -686,6 +718,91 @@ async def compute_aqr_scores(pool) -> int:
             FROM vol_stats
         """)
 
+        # Pair trade 1m — 1-month return (mn=1 vs mn=2 month-end prices), sector z-score
+        pair_1m_rows = await conn.fetch("""
+            WITH monthly AS (
+                SELECT code,
+                       DATE_TRUNC('month', date) AS month,
+                       MAX(date) AS last_date
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '3 months' AND close IS NOT NULL
+                GROUP BY code, DATE_TRUNC('month', date)
+            ),
+            prices AS (
+                SELECT m.code, p.close,
+                       ROW_NUMBER() OVER (PARTITION BY m.code ORDER BY m.month DESC) AS mn
+                FROM monthly m
+                JOIN jp_daily_prices p ON p.code = m.code AND p.date = m.last_date
+            ),
+            ret AS (
+                SELECT cur.code,
+                       (cur.close - prev.close) / NULLIF(prev.close, 0) * 100 AS ret
+                FROM prices cur
+                JOIN prices prev ON prev.code = cur.code AND prev.mn = 2
+                WHERE cur.mn = 1 AND prev.close > 0
+            ),
+            stats AS (
+                SELECT l.sector,
+                       AVG(r.ret) AS mean,
+                       NULLIF(STDDEV(r.ret)::numeric, 0) AS std
+                FROM ret r
+                JOIN jp_listings l ON l.code = r.code
+                WHERE l.sector NOT IN ('', 'その他')
+                GROUP BY l.sector HAVING COUNT(*) >= 5
+            )
+            SELECT r.code,
+                   ROUND(LEAST(100.0, GREATEST(0.0,
+                       ((r.ret - st.mean) / st.std + 3.0) / 6.0 * 100.0
+                   ))::numeric, 1) AS score
+            FROM ret r
+            JOIN jp_listings l ON l.code = r.code
+            JOIN stats st ON st.sector = l.sector
+        """)
+
+        # Pair trade 5d — 5 monthly periods (mn=1 vs mn=6), sector z-score
+        pair_5d_rows = await conn.fetch("""
+            WITH monthly AS (
+                SELECT code,
+                       DATE_TRUNC('month', date) AS month,
+                       MAX(date) AS last_date
+                FROM jp_daily_prices
+                WHERE date >= CURRENT_DATE - INTERVAL '7 months' AND close IS NOT NULL
+                GROUP BY code, DATE_TRUNC('month', date)
+            ),
+            prices AS (
+                SELECT m.code, p.close,
+                       ROW_NUMBER() OVER (PARTITION BY m.code ORDER BY m.month DESC) AS mn
+                FROM monthly m
+                JOIN jp_daily_prices p ON p.code = m.code AND p.date = m.last_date
+            ),
+            ret AS (
+                SELECT cur.code,
+                       (cur.close - prev.close) / NULLIF(prev.close, 0) * 100 AS ret
+                FROM prices cur
+                JOIN prices prev ON prev.code = cur.code AND prev.mn = 6
+                WHERE cur.mn = 1 AND prev.close > 0
+            ),
+            stats AS (
+                SELECT l.sector,
+                       AVG(r.ret) AS mean,
+                       NULLIF(STDDEV(r.ret)::numeric, 0) AS std
+                FROM ret r
+                JOIN jp_listings l ON l.code = r.code
+                WHERE l.sector NOT IN ('', 'その他')
+                GROUP BY l.sector HAVING COUNT(*) >= 5
+            )
+            SELECT r.code,
+                   ROUND(LEAST(100.0, GREATEST(0.0,
+                       ((r.ret - st.mean) / st.std + 3.0) / 6.0 * 100.0
+                   ))::numeric, 1) AS score
+            FROM ret r
+            JOIN jp_listings l ON l.code = r.code
+            JOIN stats st ON st.sector = l.sector
+        """)
+
+        # Sector mapping for Python-computed pair trade variants
+        sector_rows = await conn.fetch("SELECT code, sector FROM jp_listings")
+
     tsmom_map  = {r["code"]: float(r["score"])    for r in tsmom_rows}
 
     code_closes: dict[str, list[float]] = defaultdict(list)
@@ -718,6 +835,14 @@ async def compute_aqr_scores(pool) -> int:
     cs_mom_map = {r["code"]: float(r["score"])    for r in cs_mom_rows}
     vol_map    = {r["code"]: float(r["vol_pct"])  for r in vol_rows}
 
+    sectors = {r["code"]: r["sector"] for r in sector_rows}
+    pair_3d_map = _pair_zscore(
+        {code: v for code, closes in code_closes.items() if (v := _tsmom_return(closes, 3)) is not None},
+        sectors,
+    )
+    pair_1m_map = {r["code"]: float(r["score"]) for r in pair_1m_rows}
+    pair_5d_map = {r["code"]: float(r["score"]) for r in pair_5d_rows}
+
     # Base: all codes that have at least a TSMOM or Pair score
     all_codes = set(tsmom_map) | set(pair_map)
     if not all_codes:
@@ -740,6 +865,9 @@ async def compute_aqr_scores(pool) -> int:
             tsmom_1m_map.get(code),
             tsmom_5d_map.get(code),
             tsmom_3d_map.get(code),
+            pair_3d_map.get(code),
+            pair_5d_map.get(code),
+            pair_1m_map.get(code),
             code,
         ))
 
@@ -751,8 +879,9 @@ async def compute_aqr_scores(pool) -> int:
                 SET aqr_score   = $1, aqr_mom    = $2, aqr_vol    = $3,
                     score_tsmom = $4, score_rsi2 = $5, score_bb   = $6,
                     score_pair  = $7, score_cs_mom = $8,
-                    score_tsmom_1m = $9, score_tsmom_5d = $10, score_tsmom_3d = $11
-                WHERE code = $12
+                    score_tsmom_1m = $9, score_tsmom_5d = $10, score_tsmom_3d = $11,
+                    score_pair_3d  = $12, score_pair_5d = $13, score_pair_1m  = $14
+                WHERE code = $15
                 """,
                 records,
             )
@@ -1095,7 +1224,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         summary = await conn.fetchrow(
             """SELECT current_price, change_6m, abs_change_6m, change_months, updated_at,
                       score_tsmom, score_rsi2, score_bb, score_pair, score_cs_mom,
-                      score_tsmom_1m, score_tsmom_5d, score_tsmom_3d
+                      score_tsmom_1m, score_tsmom_5d, score_tsmom_3d,
+                      score_pair_3d, score_pair_5d, score_pair_1m
                FROM jp_stock_summary WHERE code = $1""",
             code,
         )
@@ -1181,6 +1311,9 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
             "rsi2":     float(summary["score_rsi2"])     if summary and summary["score_rsi2"]     is not None else None,
             "bb":       float(summary["score_bb"])       if summary and summary["score_bb"]       is not None else None,
             "pair":     float(summary["score_pair"])     if summary and summary["score_pair"]     is not None else None,
+            "pair_1m":  float(summary["score_pair_1m"])  if summary and summary["score_pair_1m"]  is not None else None,
+            "pair_5d":  float(summary["score_pair_5d"])  if summary and summary["score_pair_5d"]  is not None else None,
+            "pair_3d":  float(summary["score_pair_3d"])  if summary and summary["score_pair_3d"]  is not None else None,
             "cs_mom":   float(summary["score_cs_mom"])   if summary and summary["score_cs_mom"]   is not None else None,
         } if summary else None,
     }

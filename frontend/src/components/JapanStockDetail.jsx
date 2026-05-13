@@ -440,7 +440,7 @@ function StrategySignal({ stratKey, score, t }) {
   } else if (stratKey === 'bb') {
     label = score >= 75 ? t('strat_bb_squeeze') : t('strat_bb_normal')
     color = score >= 75 ? 'var(--amber)' : 'var(--text-2)'
-  } else if (stratKey === 'pair') {
+  } else if (stratKey === 'pair' || stratKey === 'pair_1m' || stratKey === 'pair_5d' || stratKey === 'pair_3d') {
     label = score > 70 ? t('strat_pair_out') : score < 30 ? t('strat_pair_under') : t('strat_pair_neutral')
     color = score > 70 ? 'var(--green)' : score < 30 ? 'var(--red)' : 'var(--text-2)'
   } else {
@@ -457,7 +457,10 @@ const STRATEGIES = [
   { key: 'tsmom_3d', nameKey: 'strat_tsmom_3d', typeKey: 'strat_tsmom_type', holdKey: 'strat_tsmom_hold', marketKey: 'strat_tsmom_market', riskKey: 'strat_tsmom_risk' },
   { key: 'rsi2',     nameKey: 'strat_rsi2',     typeKey: 'strat_rsi2_type',   holdKey: 'strat_rsi2_hold',   marketKey: 'strat_rsi2_market',   riskKey: 'strat_rsi2_risk'   },
   { key: 'bb',       nameKey: 'strat_bb',       typeKey: 'strat_bb_type',     holdKey: 'strat_bb_hold',     marketKey: 'strat_bb_market',     riskKey: 'strat_bb_risk'     },
-  { key: 'pair',     nameKey: 'strat_pair',     typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+  { key: 'pair',     nameKey: 'strat_pair_6m',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+  { key: 'pair_1m',  nameKey: 'strat_pair_1m',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+  { key: 'pair_5d',  nameKey: 'strat_pair_5d',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
+  { key: 'pair_3d',  nameKey: 'strat_pair_3d',  typeKey: 'strat_pair_type',   holdKey: 'strat_pair_hold',   marketKey: 'strat_pair_market',   riskKey: 'strat_pair_risk'   },
   { key: 'cs_mom',   nameKey: 'strat_cs_mom',   typeKey: 'strat_cs_mom_type', holdKey: 'strat_cs_mom_hold', marketKey: 'strat_cs_mom_market', riskKey: 'strat_cs_mom_risk' },
 ]
 

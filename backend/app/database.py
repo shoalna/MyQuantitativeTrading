@@ -163,6 +163,9 @@ ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_fetched_at     TIMESTAM
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_1m  NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_5d  NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_3d  NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_3d   NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_5d   NUMERIC(5,1);
+ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_pair_1m   NUMERIC(5,1);
 """
 
 
