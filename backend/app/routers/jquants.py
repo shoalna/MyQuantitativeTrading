@@ -460,6 +460,80 @@ async def fetch_youtube_report_endpoint(code: str, req: _YoutubeRequest = Body(d
     return result or {}
 
 
+@router.get("/stocks/{code}/ai-decision")
+async def stock_ai_decision(code: str):
+    """Call Claude with OHLCV data to produce a buy/wait/avoid technical decision."""
+    if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
+    import anthropic as _anthropic
+    from datetime import date as _date, timedelta as _timedelta
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
+    if not row:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    company = row["name_en"] or row["name"] or code
+    from_d = _date.today() - _timedelta(days=180)
+    price_rows = await pool.fetch(
+        "SELECT date, open, high, low, close, volume FROM jp_daily_prices "
+        "WHERE code=$1 AND date >= $2 ORDER BY date",
+        code.upper(), from_d,
+    )
+    if len(price_rows) < 10:
+        raise HTTPException(status_code=422, detail="Not enough price data. Open the detail page first to fetch history.")
+
+    # Format daily OHLCV as compact CSV for Claude
+    daily_csv = "date,open,high,low,close,volume\n" + "\n".join(
+        f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume'] or 0}"
+        for r in price_rows
+    )
+
+    # Aggregate weekly bars (week ending Friday)
+    from collections import defaultdict
+    weeks: dict = defaultdict(lambda: {"open": None, "high": -1e18, "low": 1e18, "close": None, "vol": 0})
+    for r in price_rows:
+        d = r["date"]
+        # ISO week key: year-Www
+        wk = d.strftime("%G-W%V")
+        w = weeks[wk]
+        if w["open"] is None:
+            w["open"] = r["open"]
+        if r["high"] is not None:
+            w["high"] = max(w["high"], r["high"])
+        if r["low"] is not None:
+            w["low"] = min(w["low"], r["low"])
+        w["close"] = r["close"]
+        w["vol"] += r["volume"] or 0
+    weekly_csv = "week,open,high,low,close,volume\n" + "\n".join(
+        f"{wk},{v['open']},{v['high']},{v['low']},{v['close']},{v['vol']}"
+        for wk, v in sorted(weeks.items())
+    )
+
+    prompt = (
+        f"公司：{company}（{code.upper()}，东京证券交易所）\n\n"
+        f"以下是过去约6个月的日线 OHLCV 数据：\n```\n{daily_csv}\n```\n\n"
+        f"以下是同期的周线数据：\n```\n{weekly_csv}\n```\n\n"
+        f"读一下上面的数据，假装你不是想卖我什么东西。日线和周线都看。\n\n"
+        f"告诉我真正的买家在哪里出现、这只票一直在哪里失败、成交量在说什么 vs 价格在说什么、"
+        f"趋势是健康的还是快没油了。\n\n"
+        f"买、等等、还是远离——三选一。给出理由，不超过400字。"
+    )
+    client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except _anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="レート制限に達しました。1分後に再試行してください。")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    text = "\n\n".join(
+        block.text for block in response.content if hasattr(block, "text") and block.text
+    )
+    return {"content": text, "company": company}
+
+
 @router.get("/stocks/{code}/news-analysis")
 async def stock_news_analysis(code: str):
     """Call Claude with web search to analyze recent news for a stock."""

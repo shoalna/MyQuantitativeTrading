@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport, getStockNewsAnalysis } from '../api/client'
+import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport, getStockNewsAnalysis, getStockAiDecision } from '../api/client'
 import { useLang } from '../context/LangContext'
 import { MarkdownReport, InlineText } from './MarkdownReport'
 
@@ -760,6 +760,9 @@ export default function JapanStockDetail({ code, onBack }) {
   const [aiNews, setAiNews] = useState(null)
   const [fetchingAiNews, setFetchingAiNews] = useState(false)
   const [aiNewsError, setAiNewsError] = useState(null)
+  const [aiDecision, setAiDecision] = useState(null)
+  const [fetchingAiDecision, setFetchingAiDecision] = useState(false)
+  const [aiDecisionError, setAiDecisionError] = useState(null)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -820,6 +823,21 @@ export default function JapanStockDetail({ code, onBack }) {
       console.error('Company info fetch failed:', e)
     } finally {
       setFetchingInfo(false)
+    }
+  }
+
+  const handleFetchAiDecision = async () => {
+    setFetchingAiDecision(true)
+    setAiDecisionError(null)
+    try {
+      const { data } = await getStockAiDecision(code)
+      setAiDecision(data.content)
+    } catch (e) {
+      const status = e.response?.status
+      const detail = e.response?.data?.detail || 'Failed to load decision'
+      setAiDecisionError(status === 429 ? `⏳ ${detail}` : detail)
+    } finally {
+      setFetchingAiDecision(false)
     }
   }
 
@@ -986,6 +1004,70 @@ export default function JapanStockDetail({ code, onBack }) {
         <StrategyTable scores={detail.scores} t={t} />
       </Section>
       {showStratInfo && <StrategyInfoModal onClose={() => setShowStratInfo(false)} />}
+
+      {/* ── AI Trade Decision ── */}
+      <Section icon="⚡" title={t('jp_detail_ai_decision')}>
+        {(() => {
+          // Parse verdict keyword from first line for badge
+          const verdictBadge = (text) => {
+            if (!text) return null
+            const first = text.slice(0, 80).toUpperCase()
+            const isBuy  = /买|BUY|購入|买入/.test(first)
+            const isAvoid = /远离|AVOID|回避|远离/.test(first)
+            const isWait = /等等|WAIT|待機|等待/.test(first)
+            if (!isBuy && !isAvoid && !isWait) return null
+            const [label, color] = isBuy ? ['BUY', 'var(--green)'] : isAvoid ? ['AVOID', 'var(--red)'] : ['WAIT', 'var(--amber)']
+            return (
+              <span style={{
+                display: 'inline-block', padding: '3px 14px', borderRadius: 99,
+                background: color + '22', color, fontWeight: 700, fontSize: 13,
+                border: `1px solid ${color}`, marginBottom: 12,
+              }}>{label}</span>
+            )
+          }
+
+          if (!aiDecision && !fetchingAiDecision && !aiDecisionError) return (
+            <div style={{ textAlign: 'center', padding: '20px 16px' }}>
+              <div style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 12 }}>{t('ai_decision_prompt')}</div>
+              <button onClick={handleFetchAiDecision}
+                style={{ background: 'var(--blue)', color: '#fff', border: 'none', padding: '8px 20px', fontSize: 13, borderRadius: 'var(--r-sm)' }}>
+                {t('ai_decision_generate')}
+              </button>
+            </div>
+          )
+          if (fetchingAiDecision) return (
+            <div style={{ padding: '20px 16px', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              {t('ai_decision_generating')}
+            </div>
+          )
+          if (aiDecisionError) return (
+            <div>
+              <div style={{ padding: '12px 16px', color: 'var(--red)', fontSize: 13 }}>{aiDecisionError}</div>
+              <div style={{ padding: '0 16px 16px', textAlign: 'center' }}>
+                <button onClick={handleFetchAiDecision}
+                  style={{ fontSize: 11, padding: '4px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {t('ai_decision_regenerate')}
+                </button>
+              </div>
+            </div>
+          )
+          return (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                {verdictBadge(aiDecision)}
+                <button onClick={handleFetchAiDecision} disabled={fetchingAiDecision}
+                  style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {t('ai_decision_regenerate')}
+                </button>
+              </div>
+              <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+                <MarkdownReport text={aiDecision} />
+              </div>
+            </div>
+          )
+        })()}
+      </Section>
 
       {/* ── Company overview (AI) ── */}
       {(() => {
