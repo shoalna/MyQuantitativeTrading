@@ -81,7 +81,9 @@ export default function JapanWatchlist({ onSelectStock }) {
       const { data } = await getWatchlistInsight()
       setInsight(data.content)
     } catch (e) {
-      setInsightError(e.response?.data?.detail || 'Failed to load insight')
+      const status = e.response?.status
+      const detail = e.response?.data?.detail || 'Failed to load insight'
+      setInsightError(status === 429 ? `⏳ ${detail}` : detail)
     } finally {
       setInsightLoading(false)
     }

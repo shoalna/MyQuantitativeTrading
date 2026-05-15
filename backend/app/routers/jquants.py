@@ -470,12 +470,17 @@ async def watchlist_insight():
     today_str = _date.today().strftime("%Y年%m月%d日")
     prompt = f"今天是{today_str}。\n\n看看日本股市今天在涨的票，给我挑 5 只风险/收益比真的对我有利的——不是单纯看着像牛的。每只都告诉我：在哪里进场、做错了会怎样、在哪里止盈、市场到底在哪一段定价错了。\n\n那些显而易见、人人都已经进场的就别提了。除非你认为还应该买入它。"
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4096,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
-        messages=[{"role": "user", "content": prompt}],
-    )
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except _anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="レート制限に達しました。1分後に再試行してください。")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
     text = "\n\n".join(
         block.text for block in response.content if hasattr(block, "text") and block.text
     )
