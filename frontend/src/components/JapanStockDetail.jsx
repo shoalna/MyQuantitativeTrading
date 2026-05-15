@@ -205,80 +205,88 @@ function Section({ icon, title, headerRight, children }) {
 
 const STRAT_INFO_MD = `# Score Computation Reference
 
-All scores are normalized to **0 – 100** and recomputed each time "AQR Scores" is triggered. Short-period variants (3D, 5D) need full daily history and may show **—** for stocks not yet individually viewed.
+All scores are **0 – 100** percentile ranks, recomputed when "AQR Scores" is triggered. Higher = stronger signal. Short-period variants (3D, 5D) require full daily price history and may show **—** for stocks not yet individually opened.
 
 ---
 
 ## 1. TSMOM — Time-Series Momentum
 
-Captures whether a stock's own past return predicts continuation. The raw return is ranked against all other stocks to produce a percentile score.
+**Idea:** A stock that has been rising tends to keep rising. TSMOM measures a stock's own past return and ranks it against all other stocks — the higher the rank, the stronger the uptrend.
 
 ### TSMOM 6M
 
-Computed from 7 monthly end-of-day price snapshots via SQL.
+**Data:** 7 monthly end-of-day snapshots from the database.
 
+**Step 1 — Compute each month's percent return** (how much did the price move month-over-month, 6 times):
 $$
 r_i = \\frac{P_i - P_{i-1}}{P_{i-1}} \\times 100 \\quad (i = 1 \\ldots 6)
 $$
 
+**Step 2 — Average the 6 monthly returns, then rank across all stocks** (top = 100, bottom = 0):
 $$
 \\bar{r} = \\frac{1}{6}\\sum_{i=1}^{6} r_i \\qquad \\text{score} = \\text{PERCENT\\_RANK}(\\bar{r}) \\times 100
 $$
 
-**Signal:** $\\text{score} > 50$ → Long trend &nbsp;|&nbsp; $\\text{score} < 50$ → Short trend
+**Signal:** $\\text{score} > 50$ → Uptrend &nbsp;|&nbsp; $\\text{score} < 50$ → Downtrend
 
 ### TSMOM 1M / 5D / 3D
 
-Computed in Python from 90-day rolling daily prices.
+**Data:** 90-day rolling daily prices fetched when the detail page is opened.
 
+**Step 1 — Compute return over the lookback window** ($n$ = 21 days for 1M, 5 for 5D, 3 for 3D):
 $$
-\\text{Return}(n) = \\frac{P_0 - P_{-n}}{P_{-n}} \\times 100 \\qquad \\text{score} = \\text{PERCENT\\_RANK}(\\text{Return}) \\times 100
+\\text{Return}(n) = \\frac{P_0 - P_{-n}}{P_{-n}} \\times 100
 $$
 
-where $n = 21$ (1M), $n = 5$ (5D), $n = 3$ (3D).
+**Step 2 — Rank this return across all stocks** (same percentile logic as 6M):
+$$
+\\text{score} = \\text{PERCENT\\_RANK}(\\text{Return}) \\times 100
+$$
+
+**Signal:** $\\text{score} > 50$ → Uptrend &nbsp;|&nbsp; $\\text{score} < 50$ → Downtrend
 
 ---
 
 ## 2. RSI(2) — 2-Period Wilder RSI
 
-Mean-reversion oscillator. Wilder's EMA uses $\\alpha = 1/n$ (here $1/2$).
+**Idea:** Prices cannot go up forever. RSI(2) is a short-term mean-reversion signal — if the stock has fallen sharply in the last 2 days, it is likely oversold and due for a bounce.
 
-**Step 1 — price differences:**
+**Step 1 — Daily price change** (positive = up day, negative = down day):
 $$
 d_t = P_t - P_{t-1}
 $$
 
-**Step 2 — separate gains and losses:**
+**Step 2 — Split into gains and losses** (each is always $\\geq 0$):
 $$
 U_t = \\max(d_t,\\, 0) \\qquad D_t = \\max(-d_t,\\, 0)
 $$
 
-**Step 3 — Wilder seed on first 2 bars:**
+**Step 3 — Seed the smoother** using the simple average of the first 2 bars (starting point for the running average):
 $$
 \\bar{U}_0 = \\frac{U_1 + U_2}{2} \\qquad \\bar{D}_0 = \\frac{D_1 + D_2}{2}
 $$
 
-**Step 4 — Wilder smoothing for each bar $t \\geq 3$ (with $n = 2$):**
+**Step 4 — Wilder smoothing** (exponential average that gives more weight to recent bars, $n = 2$):
 $$
 \\bar{U}_t = \\frac{\\bar{U}_{t-1} \\cdot (n-1) + U_t}{n} \\qquad \\bar{D}_t = \\frac{\\bar{D}_{t-1} \\cdot (n-1) + D_t}{n}
 $$
 
-**Step 5 — RSI:**
+**Step 5 — Convert to RSI** (ratio of average gain to average gain+loss, scaled to 0–100):
 $$
 \\text{RSI} = 100 - \\frac{100}{1 + \\bar{U}/\\bar{D}}
 $$
 
-If $\\bar{D} = 0 \\Rightarrow \\text{RSI} = 100$; if $\\bar{U} = 0 \\Rightarrow \\text{RSI} = 0$.
+If all recent moves were gains ($\\bar{D} = 0$), RSI = 100; if all losses ($\\bar{U} = 0$), RSI = 0.
 
-**Signal:** $\\text{RSI} < 15$ → Oversold (buy) &nbsp;|&nbsp; $\\text{RSI} > 85$ → Overbought (sell) &nbsp;|&nbsp; otherwise Neutral
+**Signal:** $\\text{RSI} < 15$ → Oversold — likely bounce &nbsp;|&nbsp; $\\text{RSI} > 85$ → Overbought — likely pullback &nbsp;|&nbsp; otherwise Neutral
 
 ---
 
 ## 3. BB Squeeze — Bollinger Band Width Compression
 
-Detects unusually low volatility (squeeze) that often precedes sharp breakouts. Score 100 = tightest band in 30 bars.
+**Idea:** Periods of unusually low volatility (a "squeeze") often precede sharp breakouts. This score measures how compressed the bands are right now compared to the last 30 bars. Score 100 = tightest squeeze recently seen.
 
-**Step 1 — 3-bar rolling SMA and standard deviation:**
+**Step 1 — 3-bar average price and spread** (how much prices varied in the last 3 days):
 $$
 \\text{SMA}_3(t) = \\frac{P_t + P_{t-1} + P_{t-2}}{3}
 $$
@@ -286,75 +294,75 @@ $$
 \\text{STD}_3(t) = \\sqrt{\\frac{\\sum_{k=0}^{2}\\bigl(P_{t-k} - \\text{SMA}_3\\bigr)^2}{3}}
 $$
 
-**Step 2 — bandwidth (normalised by SMA so it is price-scale invariant):**
+**Step 2 — Band width as a percentage of price** (dividing by SMA makes it comparable across stocks at different price levels):
 $$
 \\text{BW}(t) = \\frac{4 \\times \\text{STD}_3(t)}{\\text{SMA}_3(t)} \\times 100
 $$
 
-**Step 3 — min-max normalization over 30-bar rolling window:**
+**Step 3 — Rank today's width within the last 30 bars** (inverted so narrow = high score; 100 = tightest, 0 = widest):
 $$
 \\text{score} = \\left(1 - \\frac{\\text{BW} - \\text{BW}_{\\min}}{\\text{BW}_{\\max} - \\text{BW}_{\\min}}\\right) \\times 100
 $$
 
-If $\\text{BW}_{\\max} = \\text{BW}_{\\min}$ (flat volatility), score defaults to 50.
+If volatility has been completely flat over 30 bars ($\\text{BW}_{\\max} = \\text{BW}_{\\min}$), score defaults to 50.
 
-**Signal:** $\\text{score} \\geq 75$ → Squeeze (watch for breakout) &nbsp;|&nbsp; $< 75$ → Normal
+**Signal:** $\\text{score} \\geq 75$ → Squeeze — watch for breakout &nbsp;|&nbsp; $< 75$ → Normal volatility
 
 ---
 
 ## 4. Pair Trade — Sector Deviation Z-Score
 
-Compares each stock's return to its sector. High score = outperforming peers. Requires $\\geq 5$ stocks per sector.
+**Idea:** Compare each stock's return to the average of its sector peers. A stock scoring high is outperforming its own sector — useful for long/short pair trades within the same sector. Requires $\\geq 5$ stocks per sector.
 
-**Sector statistics:**
+**Step 1 — Compute sector average and standard deviation** (the "baseline" and "spread" of returns for the stock's peers):
 $$
 \\mu_s = \\frac{1}{N}\\sum_{i \\in s} r_i \\qquad \\sigma_s = \\sqrt{\\frac{\\sum_{i \\in s}(r_i - \\mu_s)^2}{N - 1}}
 $$
 
-**Z-score mapped to [0, 100]:**
+**Step 2 — Z-score: how many standard deviations above/below the sector average?** Then clamp to [0, 100] so that $z = 0$ (in-line with sector) maps to 50, $z = +3$ (far outperform) maps to 100:
 $$
 z_i = \\frac{r_i - \\mu_s}{\\sigma_s} \\qquad \\text{score} = \\text{clamp}\\!\\left(\\frac{z_i + 3}{6} \\times 100,\\ 0,\\ 100\\right)
 $$
 
-This maps $z = -3 \\to 0$, $z = 0 \\to 50$, $z = +3 \\to 100$.
+**Return used per variant** (each uses a different lookback window for $r$):
+- **6M** — average of 6 monthly returns (same raw value as TSMOM 6M)
+- **1M** — latest month-end vs. prior month-end (SQL snapshot rank 1 vs 2)
+- **5D** — rank 1 vs rank 6 month-end snapshot (≈ 5-month span)
+- **3D** — $r = (P_0 - P_{-3}) / P_{-3} \\times 100$ from daily prices
 
-**Data source per variant:**
-- **6M** — $r$ = 6-month mean monthly return (same raw value as TSMOM 6M)
-- **1M** — $r$ from SQL monthly CTE: latest month-end (rank 1) vs prior month (rank 2)
-- **5D** — $r$ from SQL monthly CTE: rank 1 vs rank 6 (≈ 5-month span)
-- **3D** — $r = (P_0 - P_{-3}) / P_{-3} \\times 100$ (Python, daily prices)
-
-**Signal:** $\\text{score} > 70$ → Outperforming &nbsp;|&nbsp; $\\text{score} < 30$ → Underperforming &nbsp;|&nbsp; 30–70 → In-line
+**Signal:** $\\text{score} > 70$ → Outperforming sector &nbsp;|&nbsp; $\\text{score} < 30$ → Underperforming sector &nbsp;|&nbsp; 30–70 → In-line with sector
 
 ---
 
 ## 5. CS Momentum — Cross-Sectional, Skip-1-Period
 
-Skips the most recent period (avoids bid-ask reversal), then measures return over 3 prior periods.
+**Idea:** Classic cross-sectional momentum skips the most recent period to avoid short-term reversal noise (e.g. bid-ask bounce), then measures the return over 3 earlier periods. The score ranks each stock against all others on this "cleaner" momentum signal.
 
-**General formula** (period = $n$ trading days):
+**Why skip?** The very latest return often reverses due to market microstructure noise. Skipping 1 period gives a more robust signal.
+
+**General formula** (period = $n$ trading days; skip 1 period, then measure 3 periods back):
 $$
 r = \\frac{P_{-(n+1)} - P_{-(4n+1)}}{P_{-(4n+1)}} \\times 100 \\qquad \\text{score} = \\text{PERCENT\\_RANK}(r) \\times 100
 $$
 
-Index $-(n+1)$ skips 1 period; $-(4n+1)$ is 1 skip + 3 measurement periods further back.
+$P_{-(n+1)}$ = price 1 skip ago; $P_{-(4n+1)}$ = price 1 skip + 3 measurement periods ago.
 
-**CS Mom 1M** — SQL monthly CTE, skip month 1, measure months 2→5:
+**CS Mom 1M** — monthly snapshots from DB, skip month 1, compare month 2 to month 5:
 $$
 r = \\frac{P_{\\text{month2}} - P_{\\text{month5}}}{P_{\\text{month5}}} \\times 100
 $$
 
-**CS Mom 5D** — Python daily prices, needs 21 bars:
+**CS Mom 5D** — daily prices (needs 21 bars): skip 1 week, measure 3 weeks back:
 $$
 r = \\frac{P_{-6} - P_{-21}}{P_{-21}} \\times 100
 $$
 
-**CS Mom 3D** — Python daily prices, needs 13 bars:
+**CS Mom 3D** — daily prices (needs 13 bars): skip 3 days, measure 9 days back:
 $$
 r = \\frac{P_{-4} - P_{-13}}{P_{-13}} \\times 100
 $$
 
-**Signal:** $\\text{score} > 70$ → Top quartile &nbsp;|&nbsp; $\\text{score} < 30$ → Bottom quartile &nbsp;|&nbsp; 30–70 → Middle
+**Signal:** $\\text{score} > 70$ → Strong momentum (top quartile) &nbsp;|&nbsp; $\\text{score} < 30$ → Weak momentum (bottom quartile) &nbsp;|&nbsp; 30–70 → Neutral
 
 ---
 
