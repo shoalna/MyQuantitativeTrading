@@ -460,6 +460,28 @@ async def fetch_youtube_report_endpoint(code: str, req: _YoutubeRequest = Body(d
     return result or {}
 
 
+@router.get("/watchlist-insight")
+async def watchlist_insight():
+    """Call Claude with web search to get today's Japan market trade ideas."""
+    if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
+    import anthropic as _anthropic
+    from datetime import date as _date
+    today_str = _date.today().strftime("%Y年%m月%d日")
+    prompt = f"今天是{today_str}。\n\n看看日本股市今天在涨的票，给我挑 5 只风险/收益比真的对我有利的——不是单纯看着像牛的。每只都告诉我：在哪里进场、做错了会怎样、在哪里止盈、市场到底在哪一段定价错了。\n\n那些显而易见、人人都已经进场的就别提了。除非你认为还应该买入它。"
+    client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4096,
+        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = "\n\n".join(
+        block.text for block in response.content if hasattr(block, "text") and block.text
+    )
+    return {"content": text}
+
+
 @router.post("/stocks/{code}/refresh")
 async def refresh_stock(code: str):
     """Re-fetch 90-day prices and quarterly fins from JQuants for one stock."""

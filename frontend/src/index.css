@@ -60,3 +60,5 @@ input:focus, select:focus { border-color: var(--blue); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-h); border-radius: 99px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }

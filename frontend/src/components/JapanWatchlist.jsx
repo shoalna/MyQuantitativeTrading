@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getJpStocks, getJpStockChart } from '../api/client'
+import { getJpStocks, getJpStockChart, getWatchlistInsight } from '../api/client'
 import { useLang } from '../context/LangContext'
 import { useFavorites } from '../hooks/useFavorites'
 import { Sparkline, Th, UpdatedAt, useIsMobile } from './JapanStocks'
+import { MarkdownReport } from './MarkdownReport'
 
 export default function JapanWatchlist({ onSelectStock }) {
   const { t } = useLang()
@@ -12,6 +13,11 @@ export default function JapanWatchlist({ onSelectStock }) {
   const [stocks, setStocks]     = useState([])
   const [loading, setLoading]   = useState(false)
   const [sortBy, setSortBy]     = useState({ by: 'code', dir: 'asc' })
+
+  const [insight, setInsight]         = useState(null)
+  const [insightLoading, setInsightLoading] = useState(false)
+  const [insightError, setInsightError]     = useState(null)
+  const [insightOpen, setInsightOpen]       = useState(true)
 
   const [chartData, setChartData] = useState({})
   const requestedCharts           = useRef(new Set())
@@ -65,6 +71,21 @@ export default function JapanWatchlist({ onSelectStock }) {
     run()
     return () => { cancelled = true }
   }, [stocks, isMobile])
+
+  // ── AI insight ────────────────────────────────────────────────────────────────
+
+  const fetchInsight = async () => {
+    setInsightLoading(true)
+    setInsightError(null)
+    try {
+      const { data } = await getWatchlistInsight()
+      setInsight(data.content)
+    } catch (e) {
+      setInsightError(e.response?.data?.detail || 'Failed to load insight')
+    } finally {
+      setInsightLoading(false)
+    }
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -124,6 +145,67 @@ export default function JapanWatchlist({ onSelectStock }) {
 
   return (
     <div style={{ padding: isMobile ? '12px' : '24px', maxWidth: 1500, margin: '0 auto' }}>
+
+      {/* ── AI Market Insight Panel ─────────────────────────────────────────── */}
+      <div style={{
+        marginBottom: 20,
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--r)',
+        background: 'var(--bg-card)',
+        overflow: 'hidden',
+      }}>
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '10px 16px', cursor: 'pointer',
+            borderBottom: insightOpen ? '1px solid var(--border)' : 'none',
+            background: 'var(--bg-surface)',
+          }}
+          onClick={() => setInsightOpen(o => !o)}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 15 }}>✦</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>今日の日本株 — AI トレードアイデア</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {!insightLoading && (
+              <button
+                onClick={e => { e.stopPropagation(); fetchInsight() }}
+                style={{
+                  padding: '4px 12px', fontSize: 12, fontWeight: 600,
+                  background: 'var(--blue)', color: '#fff',
+                  border: 'none', borderRadius: 6, cursor: 'pointer',
+                }}
+              >
+                {insight ? '更新' : '生成'}
+              </button>
+            )}
+            <span style={{ fontSize: 13, color: 'var(--text-3)', userSelect: 'none' }}>
+              {insightOpen ? '▲' : '▼'}
+            </span>
+          </div>
+        </div>
+
+        {insightOpen && (
+          <div>
+            {insightLoading && (
+              <div style={{ padding: '20px 16px', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                Claude がリサーチ中…（web 検索中、30 秒程度かかります）
+              </div>
+            )}
+            {insightError && (
+              <div style={{ padding: '16px', color: 'var(--red)', fontSize: 13 }}>{insightError}</div>
+            )}
+            {!insightLoading && !insightError && !insight && (
+              <div style={{ padding: '20px 16px', color: 'var(--text-3)', fontSize: 13 }}>
+                「生成」を押すと Claude が今日の日本市場を調べて、リスク/リターンの良い銘柄を提案します。
+              </div>
+            )}
+            {insight && <MarkdownReport text={insight} />}
+          </div>
+        )}
+      </div>
 
       <div style={{ marginBottom: 16 }}>
         <h1 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, marginBottom: 2 }}>
