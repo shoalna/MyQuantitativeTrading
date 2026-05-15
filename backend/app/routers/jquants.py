@@ -460,6 +460,43 @@ async def fetch_youtube_report_endpoint(code: str, req: _YoutubeRequest = Body(d
     return result or {}
 
 
+@router.get("/stocks/{code}/news-analysis")
+async def stock_news_analysis(code: str):
+    """Call Claude with web search to analyze recent news for a stock."""
+    if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
+        raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
+    import anthropic as _anthropic
+    from datetime import date as _date
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
+    if not row:
+        raise HTTPException(status_code=404, detail="Stock not found")
+    company = row["name_en"] or row["name"] or code
+    today_str = _date.today().strftime("%Y年%m月%d日")
+    prompt = (
+        f"今天是{today_str}。\n\n"
+        f"看一下 {company}（股票代码：{code.upper()}，东京证券交易所）最近一周的新闻。"
+        f"砍掉噪音、没意义的分析师评级、反复炒的旧标题。\n\n"
+        f"真正会改变这只票逻辑的，是哪一两件事？这件事会在 1 周、1个月内怎么演化——对应的交易是什么？"
+    )
+    client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except _anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="レート制限に達しました。1分後に再試行してください。")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    text = "\n\n".join(
+        block.text for block in response.content if hasattr(block, "text") and block.text
+    )
+    return {"content": text, "company": company}
+
+
 @router.get("/watchlist-insight")
 async def watchlist_insight():
     """Call Claude with web search to get today's Japan market trade ideas."""

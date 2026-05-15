@@ -39,3 +39,4 @@ export const fetchJpCompanyInfo = (code) => client.post(`/jquants/stocks/${code}
 export const fetchJpYoutubeReport = (code, body = {}) => client.post(`/jquants/stocks/${code}/youtube`, body)
 export const computeJpAqr = () => client.post('/jquants/compute/aqr')
 export const getWatchlistInsight = () => client.get('/jquants/watchlist-insight', { timeout: 120000 })
+export const getStockNewsAnalysis = (code) => client.get(`/jquants/stocks/${code}/news-analysis`, { timeout: 120000 })

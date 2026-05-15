@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport } from '../api/client'
+import { getJpStockDetail, refreshJpStock, fetchJpCompanyInfo, fetchJpYoutubeReport, getStockNewsAnalysis } from '../api/client'
 import { useLang } from '../context/LangContext'
 import { MarkdownReport, InlineText } from './MarkdownReport'
 
@@ -757,6 +757,9 @@ export default function JapanStockDetail({ code, onBack }) {
   const [youtubeReport, setYoutubeReport] = useState(undefined)
   const [fetchingYt, setFetchingYt] = useState(false)
   const [showStratInfo, setShowStratInfo] = useState(false)
+  const [aiNews, setAiNews] = useState(null)
+  const [fetchingAiNews, setFetchingAiNews] = useState(false)
+  const [aiNewsError, setAiNewsError] = useState(null)
 
   const fetchDetail = useCallback(async () => {
     setLoading(true)
@@ -817,6 +820,21 @@ export default function JapanStockDetail({ code, onBack }) {
       console.error('Company info fetch failed:', e)
     } finally {
       setFetchingInfo(false)
+    }
+  }
+
+  const handleFetchAiNews = async () => {
+    setFetchingAiNews(true)
+    setAiNewsError(null)
+    try {
+      const { data } = await getStockNewsAnalysis(code)
+      setAiNews(data.content)
+    } catch (e) {
+      const status = e.response?.status
+      const detail = e.response?.data?.detail || 'Failed to load analysis'
+      setAiNewsError(status === 429 ? `⏳ ${detail}` : detail)
+    } finally {
+      setFetchingAiNews(false)
     }
   }
 
@@ -1102,6 +1120,51 @@ export default function JapanStockDetail({ code, onBack }) {
           <NoContent label={t('jp_detail_no_content')} />
         </Section>
       ))}
+
+      {/* ── AI News Analysis ── */}
+      <Section icon="✦" title={t('jp_detail_ai_news')}>
+        {(() => {
+          if (!aiNews && !fetchingAiNews && !aiNewsError) return (
+            <div style={{ textAlign: 'center', padding: '20px 16px' }}>
+              <div style={{ color: 'var(--text-3)', fontSize: 13, marginBottom: 12 }}>{t('ai_news_prompt')}</div>
+              <button onClick={handleFetchAiNews}
+                style={{ background: 'var(--blue)', color: '#fff', border: 'none', padding: '8px 20px', fontSize: 13, borderRadius: 'var(--r-sm)' }}>
+                {t('ai_news_generate')}
+              </button>
+            </div>
+          )
+          if (fetchingAiNews) return (
+            <div style={{ padding: '20px 16px', color: 'var(--text-3)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid var(--border)', borderTopColor: 'var(--blue)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+              {t('ai_news_generating')}
+            </div>
+          )
+          if (aiNewsError) return (
+            <div>
+              <div style={{ padding: '12px 16px', color: 'var(--red)', fontSize: 13 }}>{aiNewsError}</div>
+              <div style={{ padding: '0 16px 16px', textAlign: 'center' }}>
+                <button onClick={handleFetchAiNews}
+                  style={{ fontSize: 11, padding: '4px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {t('ai_news_regenerate')}
+                </button>
+              </div>
+            </div>
+          )
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+                <button onClick={handleFetchAiNews} disabled={fetchingAiNews}
+                  style={{ fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
+                  {t('ai_news_regenerate')}
+                </button>
+              </div>
+              <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
+                <MarkdownReport text={aiNews} />
+              </div>
+            </div>
+          )
+        })()}
+      </Section>
 
       {/* ── YouTube Analysis ── */}
       <Section icon="▶" title={t('jp_detail_youtube')}>
