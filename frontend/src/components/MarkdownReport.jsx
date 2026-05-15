@@ -37,12 +37,16 @@ export function InlineText({ text }) {
   })
 }
 
+const _isSeparatorRow = (cells) => cells.every(c => /^:?-+:?$/.test(c.trim()))
+const _parseCells = (line) => line.replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+
 export function MarkdownReport({ text }) {
   if (!text) return null
   const lines = text.split('\n')
   const els = []
   let listBuf = []
   let mathBuf = null
+  let tableBuf = []  // rows of string[] cells; first row = header
 
   const flushList = () => {
     if (!listBuf.length) return
@@ -54,12 +58,43 @@ export function MarkdownReport({ text }) {
     listBuf = []
   }
 
+  const flushTable = () => {
+    if (!tableBuf.length) return
+    const thStyle = {
+      padding: '7px 12px', fontSize: 12, fontWeight: 600, textAlign: 'left',
+      color: 'var(--text-2)', borderBottom: '2px solid var(--border)',
+      background: 'var(--bg-card)', whiteSpace: 'nowrap',
+    }
+    const tdStyle = {
+      padding: '7px 12px', fontSize: 13, color: 'var(--text-1)',
+      borderBottom: '1px solid var(--border)', verticalAlign: 'top',
+    }
+    const [headerRow, ...dataRows] = tableBuf
+    els.push(
+      <div key={`tbl-${els.length}`} style={{ overflowX: 'auto', margin: '10px 0 14px' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
+          <thead>
+            <tr>{headerRow.map((h, ci) => <th key={ci} style={thStyle}><InlineText text={h} /></th>)}</tr>
+          </thead>
+          <tbody>
+            {dataRows.map((row, ri) => (
+              <tr key={ri} style={{ background: ri % 2 === 1 ? 'var(--bg-surface)' : 'transparent' }}>
+                {row.map((cell, ci) => <td key={ci} style={tdStyle}><InlineText text={cell} /></td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+    tableBuf = []
+  }
+
   lines.forEach((raw, i) => {
     const line = raw.trimEnd()
 
     if (line === '$$') {
       if (mathBuf === null) {
-        flushList()
+        flushList(); flushTable()
         mathBuf = []
       } else {
         els.push(
@@ -75,6 +110,17 @@ export function MarkdownReport({ text }) {
       return
     }
     if (mathBuf !== null) { mathBuf.push(line); return }
+
+    // Table row
+    if (line.startsWith('|')) {
+      flushList()
+      const cells = _parseCells(line)
+      if (!_isSeparatorRow(cells)) tableBuf.push(cells)
+      return
+    }
+
+    // Non-table line — flush any pending table first
+    flushTable()
 
     if (line === '---') {
       flushList()
@@ -102,5 +148,6 @@ export function MarkdownReport({ text }) {
     }
   })
   flushList()
+  flushTable()
   return <div style={{ padding: '12px 16px' }}>{els}</div>
 }
