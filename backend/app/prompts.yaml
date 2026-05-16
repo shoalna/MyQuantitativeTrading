@@ -1,5 +1,5 @@
 watchlist_insight:
-  max_tokens: 2048
+  max_tokens: 4096
   max_web_searches: 3
   prompt: |
     今天是{today}。
@@ -9,7 +9,7 @@ watchlist_insight:
     那些显而易见、人人都已经进场的就别提了。除非你认为还应该买入它。
 
 news_analysis:
-  max_tokens: 2048
+  max_tokens: 4096
   max_web_searches: 4
   prompt: |
     今天是{today}。
@@ -19,7 +19,7 @@ news_analysis:
     真正会改变这只票逻辑的，是哪一两件事？这件事会在 1 周、1个月内怎么演化——对应的交易是什么？
 
 ai_decision:
-  max_tokens: 1024
+  max_tokens: 2048
   prompt: |
     公司：{company}（{code}，东京证券交易所）
 
