@@ -41,3 +41,6 @@ export const computeJpAqr = () => client.post('/jquants/compute/aqr')
 export const getWatchlistInsight = () => client.get('/jquants/watchlist-insight', { timeout: 120000 })
 export const getStockNewsAnalysis = (code) => client.get(`/jquants/stocks/${code}/news-analysis`, { timeout: 120000 })
 export const getStockAiDecision = (code) => client.get(`/jquants/stocks/${code}/ai-decision`, { timeout: 60000 })
+
+export const getPrompts = () => client.get('/config/prompts')
+export const updatePrompt = (key, data) => client.put(`/config/prompts/${key}`, data)

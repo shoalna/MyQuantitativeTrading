@@ -114,6 +114,14 @@ CREATE TABLE IF NOT EXISTS jp_daily_prices (
 );
 CREATE INDEX IF NOT EXISTS idx_jp_prices_date ON jp_daily_prices(date);
 CREATE INDEX IF NOT EXISTS idx_jp_prices_code ON jp_daily_prices(code);
+
+CREATE TABLE IF NOT EXISTS prompt_configs (
+    key              TEXT        PRIMARY KEY,
+    prompt           TEXT        NOT NULL,
+    max_tokens       INTEGER     NOT NULL DEFAULT 4096,
+    max_web_searches INTEGER,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 

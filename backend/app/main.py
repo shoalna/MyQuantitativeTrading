@@ -3,9 +3,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.database import create_pool, close_pool, init_db
-from app.routers import sectors, jobs, reports, companies, targets, jquants
+from app.database import create_pool, close_pool, init_db, get_pool
+from app.routers import sectors, jobs, reports, companies, targets, jquants, config
 from app.scheduler import setup_scheduler
+from app import prompts
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,6 +15,7 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     await create_pool()
     await init_db()
+    await prompts.load_from_db(await get_pool())
     setup_scheduler()
     yield
     await close_pool()
@@ -34,6 +36,7 @@ app.include_router(reports.router, prefix="/reports")
 app.include_router(companies.router, prefix="/companies")
 app.include_router(targets.router, prefix="/targets")
 app.include_router(jquants.router, prefix="/jquants")
+app.include_router(config.router, prefix="/config")
 
 
 @app.get("/health")
