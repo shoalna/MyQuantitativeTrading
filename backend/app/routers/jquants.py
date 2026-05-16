@@ -467,6 +467,8 @@ async def stock_ai_decision(code: str):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
     import anthropic as _anthropic
     from datetime import date as _date, timedelta as _timedelta
+    from collections import defaultdict
+    from app.prompts import get_prompt, get_cfg
     pool = await get_pool()
     row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
     if not row:
@@ -480,20 +482,13 @@ async def stock_ai_decision(code: str):
     )
     if len(price_rows) < 10:
         raise HTTPException(status_code=422, detail="Not enough price data. Open the detail page first to fetch history.")
-
-    # Format daily OHLCV as compact CSV for Claude
     daily_csv = "date,open,high,low,close,volume\n" + "\n".join(
         f"{r['date']},{r['open']},{r['high']},{r['low']},{r['close']},{r['volume'] or 0}"
         for r in price_rows
     )
-
-    # Aggregate weekly bars (week ending Friday)
-    from collections import defaultdict
     weeks: dict = defaultdict(lambda: {"open": None, "high": -1e18, "low": 1e18, "close": None, "vol": 0})
     for r in price_rows:
-        d = r["date"]
-        # ISO week key: year-Www
-        wk = d.strftime("%G-W%V")
+        wk = r["date"].strftime("%G-W%V")
         w = weeks[wk]
         if w["open"] is None:
             w["open"] = r["open"]
@@ -507,21 +502,13 @@ async def stock_ai_decision(code: str):
         f"{wk},{v['open']},{v['high']},{v['low']},{v['close']},{v['vol']}"
         for wk, v in sorted(weeks.items())
     )
-
-    prompt = (
-        f"公司：{company}（{code.upper()}，东京证券交易所）\n\n"
-        f"以下是过去约6个月的日线 OHLCV 数据：\n```\n{daily_csv}\n```\n\n"
-        f"以下是同期的周线数据：\n```\n{weekly_csv}\n```\n\n"
-        f"读一下上面的数据，假装你不是想卖我什么东西。日线和周线都看。\n\n"
-        f"告诉我真正的买家在哪里出现、这只票一直在哪里失败、成交量在说什么 vs 价格在说什么、"
-        f"趋势是健康的还是快没油了。\n\n"
-        f"买、等等、还是远离——三选一。给出理由，不超过400字。"
-    )
+    cfg = get_cfg("ai_decision")
+    prompt = get_prompt("ai_decision", company=company, code=code.upper(), daily_csv=daily_csv, weekly_csv=weekly_csv)
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1024,
+            max_tokens=cfg["max_tokens"],
             messages=[{"role": "user", "content": prompt}],
         )
     except _anthropic.RateLimitError:
@@ -541,24 +528,21 @@ async def stock_news_analysis(code: str):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
     import anthropic as _anthropic
     from datetime import date as _date
+    from app.prompts import get_prompt, get_cfg
     pool = await get_pool()
     row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
     if not row:
         raise HTTPException(status_code=404, detail="Stock not found")
     company = row["name_en"] or row["name"] or code
-    today_str = _date.today().strftime("%Y年%m月%d日")
-    prompt = (
-        f"今天是{today_str}。\n\n"
-        f"看一下 {company}（股票代码：{code.upper()}，东京证券交易所）最近一周的新闻。"
-        f"砍掉噪音、没意义的分析师评级、反复炒的旧标题。\n\n"
-        f"真正会改变这只票逻辑的，是哪一两件事？这件事会在 1 周、1个月内怎么演化——对应的交易是什么？"
-    )
+    today = _date.today().strftime("%Y年%m月%d日")
+    cfg = get_cfg("news_analysis")
+    prompt = get_prompt("news_analysis", today=today, company=company, code=code.upper())
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2048,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
+            max_tokens=cfg["max_tokens"],
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": cfg["max_web_searches"]}],
             messages=[{"role": "user", "content": prompt}],
         )
     except _anthropic.RateLimitError:
@@ -578,14 +562,16 @@ async def watchlist_insight():
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
     import anthropic as _anthropic
     from datetime import date as _date
-    today_str = _date.today().strftime("%Y年%m月%d日")
-    prompt = f"今天是{today_str}。\n\n看看日本股市今天在涨的票，给我挑 5 只风险/收益比真的对我有利的——不是单纯看着像牛的。每只都告诉我：在哪里进场、做错了会怎样、在哪里止盈、市场到底在哪一段定价错了。\n\n那些显而易见、人人都已经进场的就别提了。除非你认为还应该买入它。"
+    from app.prompts import get_prompt, get_cfg
+    today = _date.today().strftime("%Y年%m月%d日")
+    cfg = get_cfg("watchlist_insight")
+    prompt = get_prompt("watchlist_insight", today=today)
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
     try:
         response = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=2048,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            max_tokens=cfg["max_tokens"],
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": cfg["max_web_searches"]}],
             messages=[{"role": "user", "content": prompt}],
         )
     except _anthropic.RateLimitError:
