@@ -926,7 +926,7 @@ async def get_chart_data(pool, client: JQuantsClient, code: str) -> list[dict]:
         cached = await conn.fetchrow(
             "SELECT chart_data, updated_at FROM jp_chart_cache WHERE code = $1", code
         )
-    if cached and (datetime.utcnow() - cached["updated_at"]).days < 7:
+    if cached and (datetime.utcnow() - cached["updated_at"].replace(tzinfo=None)).days < 7:
         return cached["chart_data"]
 
     today = date.today()
