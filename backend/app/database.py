@@ -115,6 +115,12 @@ CREATE TABLE IF NOT EXISTS jp_daily_prices (
 CREATE INDEX IF NOT EXISTS idx_jp_prices_date ON jp_daily_prices(date);
 CREATE INDEX IF NOT EXISTS idx_jp_prices_code ON jp_daily_prices(code);
 
+CREATE TABLE IF NOT EXISTS watchlist_insights (
+    date        DATE        PRIMARY KEY,
+    content     TEXT        NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS prompt_configs (
     key              TEXT        PRIMARY KEY,
     prompt           TEXT        NOT NULL,
@@ -168,6 +174,10 @@ ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info          TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS company_info_fetched_at TIMESTAMPTZ;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_report         TEXT;
 ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS youtube_fetched_at     TIMESTAMPTZ;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS news_analysis          TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS news_analysis_fetched_at TIMESTAMPTZ;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS ai_decision            TEXT;
+ALTER TABLE jp_listings ADD COLUMN IF NOT EXISTS ai_decision_fetched_at TIMESTAMPTZ;
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_1m  NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_5d  NUMERIC(5,1);
 ALTER TABLE jp_stock_summary ADD COLUMN IF NOT EXISTS score_tsmom_3d  NUMERIC(5,1);

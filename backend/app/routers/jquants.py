@@ -461,7 +461,7 @@ async def fetch_youtube_report_endpoint(code: str, req: _YoutubeRequest = Body(d
 
 
 @router.get("/stocks/{code}/ai-decision")
-async def stock_ai_decision(code: str):
+async def stock_ai_decision(code: str, refresh: bool = False):
     """Call Claude with OHLCV data to produce a buy/wait/avoid technical decision."""
     if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
@@ -470,10 +470,19 @@ async def stock_ai_decision(code: str):
     from collections import defaultdict
     from app.prompts import get_prompt, get_cfg
     pool = await get_pool()
-    row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
+    row = await pool.fetchrow(
+        "SELECT name, name_en, ai_decision, ai_decision_fetched_at FROM jp_listings WHERE code=$1",
+        code.upper(),
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Stock not found")
     company = row["name_en"] or row["name"] or code
+
+    if not refresh and row["ai_decision"] and row["ai_decision_fetched_at"]:
+        fetched_date = row["ai_decision_fetched_at"].replace(tzinfo=None).date()
+        if fetched_date == _date.today():
+            return {"content": row["ai_decision"], "company": company, "cached": True}
+
     from_d = _date.today() - _timedelta(days=180)
     price_rows = await pool.fetch(
         "SELECT date, open, high, low, close, volume FROM jp_daily_prices "
@@ -518,11 +527,15 @@ async def stock_ai_decision(code: str):
     text = "\n\n".join(
         block.text for block in response.content if hasattr(block, "text") and block.text
     )
-    return {"content": text, "company": company}
+    await pool.execute(
+        "UPDATE jp_listings SET ai_decision=$1, ai_decision_fetched_at=NOW() WHERE code=$2",
+        text, code.upper(),
+    )
+    return {"content": text, "company": company, "cached": False}
 
 
 @router.get("/stocks/{code}/news-analysis")
-async def stock_news_analysis(code: str):
+async def stock_news_analysis(code: str, refresh: bool = False):
     """Call Claude with web search to analyze recent news for a stock."""
     if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
@@ -530,10 +543,19 @@ async def stock_news_analysis(code: str):
     from datetime import date as _date
     from app.prompts import get_prompt, get_cfg
     pool = await get_pool()
-    row = await pool.fetchrow("SELECT name, name_en FROM jp_listings WHERE code=$1", code.upper())
+    row = await pool.fetchrow(
+        "SELECT name, name_en, news_analysis, news_analysis_fetched_at FROM jp_listings WHERE code=$1",
+        code.upper(),
+    )
     if not row:
         raise HTTPException(status_code=404, detail="Stock not found")
     company = row["name_en"] or row["name"] or code
+
+    if not refresh and row["news_analysis"] and row["news_analysis_fetched_at"]:
+        fetched_date = row["news_analysis_fetched_at"].replace(tzinfo=None).date()
+        if fetched_date == _date.today():
+            return {"content": row["news_analysis"], "company": company, "cached": True}
+
     today = _date.today().strftime("%Y年%m月%d日")
     cfg = get_cfg("news_analysis")
     prompt = get_prompt("news_analysis", today=today, company=company, code=code.upper())
@@ -552,18 +574,32 @@ async def stock_news_analysis(code: str):
     text = "\n\n".join(
         block.text for block in response.content if hasattr(block, "text") and block.text
     )
-    return {"content": text, "company": company}
+    await pool.execute(
+        "UPDATE jp_listings SET news_analysis=$1, news_analysis_fetched_at=NOW() WHERE code=$2",
+        text, code.upper(),
+    )
+    return {"content": text, "company": company, "cached": False}
 
 
 @router.get("/watchlist-insight")
-async def watchlist_insight():
+async def watchlist_insight(refresh: bool = False):
     """Call Claude with web search to get today's Japan market trade ideas."""
     if not settings.anthropic_api_key or settings.anthropic_api_key.startswith("your_"):
         raise HTTPException(status_code=400, detail="ANTHROPIC_API_KEY is not configured")
     import anthropic as _anthropic
     from datetime import date as _date
     from app.prompts import get_prompt, get_cfg
-    today = _date.today().strftime("%Y年%m月%d日")
+    pool = await get_pool()
+    today_date = _date.today()
+
+    if not refresh:
+        cached = await pool.fetchrow(
+            "SELECT content FROM watchlist_insights WHERE date=$1", today_date
+        )
+        if cached:
+            return {"content": cached["content"], "cached": True}
+
+    today = today_date.strftime("%Y年%m月%d日")
     cfg = get_cfg("watchlist_insight")
     prompt = get_prompt("watchlist_insight", today=today)
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
@@ -581,7 +617,15 @@ async def watchlist_insight():
     text = "\n\n".join(
         block.text for block in response.content if hasattr(block, "text") and block.text
     )
-    return {"content": text}
+    await pool.execute(
+        """
+        INSERT INTO watchlist_insights (date, content)
+        VALUES ($1, $2)
+        ON CONFLICT (date) DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+        """,
+        today_date, text,
+    )
+    return {"content": text, "cached": False}
 
 
 @router.post("/stocks/{code}/refresh")
