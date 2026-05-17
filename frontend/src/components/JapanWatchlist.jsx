@@ -89,6 +89,8 @@ export default function JapanWatchlist({ onSelectStock }) {
     }
   }
 
+  useEffect(() => { fetchInsight() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Helpers ───────────────────────────────────────────────────────────────────
 
   const handleSort = col => {
