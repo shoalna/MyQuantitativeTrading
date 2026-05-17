@@ -628,6 +628,30 @@ async def watchlist_insight(refresh: bool = False):
     return {"content": text, "cached": False}
 
 
+@router.get("/favorites")
+async def get_favorites():
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT code FROM jp_favorites ORDER BY created_at")
+    return {"codes": [r["code"] for r in rows]}
+
+
+@router.post("/favorites/{code}")
+async def add_favorite(code: str):
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO jp_favorites (code) VALUES ($1) ON CONFLICT DO NOTHING",
+        code.upper(),
+    )
+    return {"ok": True}
+
+
+@router.delete("/favorites/{code}")
+async def remove_favorite(code: str):
+    pool = await get_pool()
+    await pool.execute("DELETE FROM jp_favorites WHERE code=$1", code.upper())
+    return {"ok": True}
+
+
 @router.post("/stocks/{code}/refresh")
 async def refresh_stock(code: str):
     """Re-fetch 90-day prices and quarterly fins from JQuants for one stock."""

@@ -121,6 +121,11 @@ CREATE TABLE IF NOT EXISTS watchlist_insights (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS jp_favorites (
+    code        TEXT        PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS prompt_configs (
     key              TEXT        PRIMARY KEY,
     prompt           TEXT        NOT NULL,

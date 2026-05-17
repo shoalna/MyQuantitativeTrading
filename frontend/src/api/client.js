@@ -44,3 +44,7 @@ export const getStockAiDecision = (code, refresh = false) => client.get(`/jquant
 
 export const getPrompts = () => client.get('/config/prompts')
 export const updatePrompt = (key, data) => client.put(`/config/prompts/${key}`, data)
+
+export const getFavorites = () => client.get('/jquants/favorites')
+export const addFavorite = (code) => client.post(`/jquants/favorites/${code}`)
+export const removeFavorite = (code) => client.delete(`/jquants/favorites/${code}`)

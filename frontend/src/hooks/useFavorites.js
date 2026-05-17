@@ -1,25 +1,50 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { getFavorites, addFavorite, removeFavorite } from '../api/client'
 
-const KEY = 'jp_favorites'
+const LS_KEY = 'jp_favorites'
 
-function load() {
-  try { return new Set(JSON.parse(localStorage.getItem(KEY) || '[]')) }
+function loadLocal() {
+  try { return new Set(JSON.parse(localStorage.getItem(LS_KEY) || '[]')) }
   catch { return new Set() }
 }
 
-function save(set) {
-  try { localStorage.setItem(KEY, JSON.stringify([...set])) } catch {}
-}
-
 export function useFavorites() {
-  const [favorites, setFavorites] = useState(load)
+  const [favorites, setFavorites] = useState(loadLocal)
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const { data } = await getFavorites()
+        const serverSet = new Set(data.codes)
+
+        // Migrate any localStorage codes not yet on the server
+        const localCodes = loadLocal()
+        const toMigrate = [...localCodes].filter(c => !serverSet.has(c))
+        await Promise.all(toMigrate.map(c => addFavorite(c).catch(() => {})))
+
+        setFavorites(new Set([...serverSet, ...toMigrate]))
+        localStorage.removeItem(LS_KEY)
+      } catch {
+        // API unavailable — keep using localStorage state
+      }
+    }
+    init()
+  }, [])
 
   const toggle = useCallback((code) => {
     setFavorites(prev => {
       const next = new Set(prev)
-      if (next.has(code)) next.delete(code)
-      else next.add(code)
-      save(next)
+      if (next.has(code)) {
+        next.delete(code)
+        removeFavorite(code).catch(() => {
+          setFavorites(p => { const r = new Set(p); r.add(code); return r })
+        })
+      } else {
+        next.add(code)
+        addFavorite(code).catch(() => {
+          setFavorites(p => { const r = new Set(p); r.delete(code); return r })
+        })
+      }
       return next
     })
   }, [])
