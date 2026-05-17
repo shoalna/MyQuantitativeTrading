@@ -38,9 +38,9 @@ export const refreshJpStock = (code) => client.post(`/jquants/stocks/${code}/ref
 export const fetchJpCompanyInfo = (code) => client.post(`/jquants/stocks/${code}/company-info`)
 export const fetchJpYoutubeReport = (code, body = {}) => client.post(`/jquants/stocks/${code}/youtube`, body)
 export const computeJpAqr = () => client.post('/jquants/compute/aqr')
-export const getWatchlistInsight = () => client.get('/jquants/watchlist-insight', { timeout: 120000 })
-export const getStockNewsAnalysis = (code) => client.get(`/jquants/stocks/${code}/news-analysis`, { timeout: 120000 })
-export const getStockAiDecision = (code) => client.get(`/jquants/stocks/${code}/ai-decision`, { timeout: 60000 })
+export const getWatchlistInsight = (refresh = false) => client.get('/jquants/watchlist-insight', { params: refresh ? { refresh: true } : {}, timeout: 120000 })
+export const getStockNewsAnalysis = (code, refresh = false) => client.get(`/jquants/stocks/${code}/news-analysis`, { params: refresh ? { refresh: true } : {}, timeout: 120000 })
+export const getStockAiDecision = (code, refresh = false) => client.get(`/jquants/stocks/${code}/ai-decision`, { params: refresh ? { refresh: true } : {}, timeout: 60000 })
 
 export const getPrompts = () => client.get('/config/prompts')
 export const updatePrompt = (key, data) => client.put(`/config/prompts/${key}`, data)

@@ -74,11 +74,11 @@ export default function JapanWatchlist({ onSelectStock }) {
 
   // ── AI insight ────────────────────────────────────────────────────────────────
 
-  const fetchInsight = async () => {
+  const fetchInsight = async (refresh = false) => {
     setInsightLoading(true)
     setInsightError(null)
     try {
-      const { data } = await getWatchlistInsight()
+      const { data } = await getWatchlistInsight(refresh)
       setInsight(data.content)
     } catch (e) {
       const status = e.response?.status
@@ -172,7 +172,7 @@ export default function JapanWatchlist({ onSelectStock }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {!insightLoading && (
               <button
-                onClick={e => { e.stopPropagation(); fetchInsight() }}
+                onClick={e => { e.stopPropagation(); fetchInsight(!!insight) }}
                 style={{
                   padding: '4px 12px', fontSize: 12, fontWeight: 600,
                   background: 'var(--blue)', color: '#fff',

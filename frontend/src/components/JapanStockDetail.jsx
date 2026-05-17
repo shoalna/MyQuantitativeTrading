@@ -794,6 +794,8 @@ export default function JapanStockDetail({ code, onBack }) {
     if (detail) {
       setCompanyInfo(detail.company_info ?? null)
       setYoutubeReport(detail.youtube_report ?? null)
+      if (detail.news_analysis) setAiNews(detail.news_analysis)
+      if (detail.ai_decision)   setAiDecision(detail.ai_decision)
     }
   }, [detail])
 
@@ -826,11 +828,11 @@ export default function JapanStockDetail({ code, onBack }) {
     }
   }
 
-  const handleFetchAiDecision = async () => {
+  const handleFetchAiDecision = async (refresh = false) => {
     setFetchingAiDecision(true)
     setAiDecisionError(null)
     try {
-      const { data } = await getStockAiDecision(code)
+      const { data } = await getStockAiDecision(code, refresh)
       setAiDecision(data.content)
     } catch (e) {
       const status = e.response?.status
@@ -841,11 +843,11 @@ export default function JapanStockDetail({ code, onBack }) {
     }
   }
 
-  const handleFetchAiNews = async () => {
+  const handleFetchAiNews = async (refresh = false) => {
     setFetchingAiNews(true)
     setAiNewsError(null)
     try {
-      const { data } = await getStockNewsAnalysis(code)
+      const { data } = await getStockNewsAnalysis(code, refresh)
       setAiNews(data.content)
     } catch (e) {
       const status = e.response?.status
@@ -1045,7 +1047,7 @@ export default function JapanStockDetail({ code, onBack }) {
             <div>
               <div style={{ padding: '12px 16px', color: 'var(--red)', fontSize: 13 }}>{aiDecisionError}</div>
               <div style={{ padding: '0 16px 16px', textAlign: 'center' }}>
-                <button onClick={handleFetchAiDecision}
+                <button onClick={() => handleFetchAiDecision(true)}
                   style={{ fontSize: 11, padding: '4px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
                   {t('ai_decision_regenerate')}
                 </button>
@@ -1056,7 +1058,7 @@ export default function JapanStockDetail({ code, onBack }) {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
                 {verdictBadge(aiDecision)}
-                <button onClick={handleFetchAiDecision} disabled={fetchingAiDecision}
+                <button onClick={() => handleFetchAiDecision(true)} disabled={fetchingAiDecision}
                   style={{ marginLeft: 'auto', fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
                   {t('ai_decision_regenerate')}
                 </button>
@@ -1225,7 +1227,7 @@ export default function JapanStockDetail({ code, onBack }) {
             <div>
               <div style={{ padding: '12px 16px', color: 'var(--red)', fontSize: 13 }}>{aiNewsError}</div>
               <div style={{ padding: '0 16px 16px', textAlign: 'center' }}>
-                <button onClick={handleFetchAiNews}
+                <button onClick={() => handleFetchAiNews(true)}
                   style={{ fontSize: 11, padding: '4px 14px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
                   {t('ai_news_regenerate')}
                 </button>
@@ -1235,7 +1237,7 @@ export default function JapanStockDetail({ code, onBack }) {
           return (
             <div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-                <button onClick={handleFetchAiNews} disabled={fetchingAiNews}
+                <button onClick={() => handleFetchAiNews(true)} disabled={fetchingAiNews}
                   style={{ fontSize: 11, padding: '2px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)', color: 'var(--text-2)', borderRadius: 'var(--r-sm)' }}>
                   {t('ai_news_regenerate')}
                 </button>

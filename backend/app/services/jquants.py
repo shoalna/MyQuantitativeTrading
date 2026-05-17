@@ -1243,7 +1243,9 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         listing = await conn.fetchrow(
             """SELECT code, name, name_en, sector, market,
                       company_info, company_info_fetched_at,
-                      youtube_report, youtube_fetched_at
+                      youtube_report, youtube_fetched_at,
+                      news_analysis, news_analysis_fetched_at,
+                      ai_decision, ai_decision_fetched_at
                FROM jp_listings WHERE code = $1""",
             code,
         )
@@ -1305,6 +1307,17 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
     if listing and listing["youtube_report"]:
         youtube_report = json.loads(listing["youtube_report"])
 
+    # AI analysis: return today's cached result if available.
+    cached_news_analysis = None
+    if listing and listing["news_analysis"] and listing["news_analysis_fetched_at"]:
+        if listing["news_analysis_fetched_at"].replace(tzinfo=None).date() == today:
+            cached_news_analysis = listing["news_analysis"]
+
+    cached_ai_decision = None
+    if listing and listing["ai_decision"] and listing["ai_decision_fetched_at"]:
+        if listing["ai_decision_fetched_at"].replace(tzinfo=None).date() == today:
+            cached_ai_decision = listing["ai_decision"]
+
     quarterly_fins = None
     try:
         quarterly_fins = await get_quarterly_fins(pool, client, code)
@@ -1329,6 +1342,8 @@ async def get_stock_detail(pool, client: Optional[JQuantsClient], code: str) -> 
         "company_info":    company_info,
         "quarterly_fins":  quarterly_fins,
         "youtube_report":  youtube_report,
+        "news_analysis":   cached_news_analysis,
+        "ai_decision":     cached_ai_decision,
         "fetched_at":   datetime.utcnow().isoformat() + "Z",
         "scores": {
             "tsmom":    float(summary["score_tsmom"])    if summary and summary["score_tsmom"]    is not None else None,
